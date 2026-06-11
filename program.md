@@ -9,6 +9,7 @@ To set up a new experiment, work with the user to:
 1. **Agree on a run tag**: propose a tag based on today's date (e.g. `jun11`). The branch `nanowan/<tag>` must not already exist — this is a fresh run.
 2. **Create the branch**: `git checkout -b nanowan/<tag>` from current master.
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
+   - `prepare.py` — fixed constants, correctness check, and summary output. Do not modify.
    - `run.py` — main inference script; the primary file to modify.
    - `model.py` — WAN transformer architecture.
    - `layers.py` — attention and other layer primitives.
@@ -31,10 +32,9 @@ You launch a run simply as: `uv run run.py`.
 - Modify any `.py` file in the repo. Everything is fair game: attention computation, quantization, `torch.compile`, LoRA fusion, model precision, scheduler, number of denoising steps, loading strategy, kernel choices, etc.
 
 **What you CANNOT do:**
+- Modify `prepare.py`. It contains the fixed constants, the correctness check (`compare_latents_ref`), and the summary output format (`print_summary`) — these are the ground truth.
 - Modify model weight files in `models/`. They are read-only checkpoints.
 - Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Reduce `HEIGHT`, `WIDTH`, or `NUM_FRAMES` below their configured values — the output geometry must stay the same.
-- Skip generating `output.mp4`. The video file must be produced and must be visually coherent (not all-black, not pure noise).
 
 **The goal is simple: get the lowest denoising_seconds.** The denoising loop is the compute bottleneck and the main lever for optimization. Everything is fair game. The only constraint is that the code produces a valid video without crashing.
 

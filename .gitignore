@@ -14,3 +14,5 @@ cache
 examples
 .torchinductor/
 logs
+run.log
+results.tsv

@@ -1,61 +1,46 @@
-"""Minimal WAN 2.2 I2V inference script.
+"""WAN 2.2 I2V inference — optimize this file to reduce denoising_seconds."""
 
-Two-stage denoising: 4 steps with the high-noise transformer, 4 steps with
-the low-noise transformer.  Both transformers receive lightning LoRAs before
-running.
-"""
+import os
+
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import time
 
-import imageio
-import numpy as np
 import PIL.Image
 import torch
 from transformers import AutoTokenizer
 
 from lora import apply_loras
 from model import WanModel
+from prepare import (
+  DIT_DTYPE,
+  FLOW_SHIFT,
+  HEIGHT,
+  HIGH_NOISE_LORAS,
+  HIGH_NOISE_PATH,
+  HIGH_NOISE_STRENGTHS,
+  IMAGE_PATH,
+  LOW_NOISE_LORAS,
+  LOW_NOISE_PATH,
+  LOW_NOISE_STRENGTHS,
+  NUM_FRAMES,
+  NUM_STEPS,
+  OUTPUT_PATH,
+  PROMPT,
+  T5_PATH,
+  TEXT_LEN,
+  TOKENIZER_ID,
+  VAE_DTYPE,
+  VAE_PATH,
+  WIDTH,
+  print_summary,
+  save_mp4,
+)
 from scheduler import FlowMatchEulerDiscreteScheduler
 from t5 import T5Encoder
 from utils import DEVICE, normalize, numpy_to_pt, pil_to_numpy, set_default_torch_dtype, skip_init_modules
 from vae import LATENTS_MEAN, LATENTS_STD, Wan2_1_VAE
-
-# ---------------------------------------------------------------------------
-# User-configurable constants
-# ---------------------------------------------------------------------------
-
-IMAGE_PATH = "./i2v_input.JPG"
-PROMPT = "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."  # noqa: E501
-OUTPUT_PATH = "output.mp4"
-
-# Inference geometry
-HEIGHT = 832
-WIDTH = 480
-NUM_FRAMES = 81  # pixel frames; latent frames = 1 + (81-1)//4 = 21
-NUM_STEPS = 8  # total steps; first half = high noise, second = low noise
-FLOW_SHIFT = 5.0
-FPS = 16
-
-# Dtype: fp16 checkpoints → use torch.float16
-DIT_DTYPE = torch.float16
-VAE_DTYPE = torch.float32
-
-# Model paths
-MODEL_DIR = "models"
-TOKENIZER_ID = "google/umt5-xxl"
-T5_PATH = f"{MODEL_DIR}/text_encoders/umt5-xxl-enc-bf16.safetensors"
-VAE_PATH = f"{MODEL_DIR}/vae/Wan2_1_VAE_bf16.safetensors"
-HIGH_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/wan2.2_i2v_high_noise_14B_fp16.safetensors"
-LOW_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/wan2.2_i2v_low_noise_14B_fp16.safetensors"
-
-# LoRAs applied to both transformers (lightning 4-step distillation)
-HIGH_NOISE_LORAS = [f"{MODEL_DIR}/loras/lightning_high_noise_model.safetensors"]
-HIGH_NOISE_STRENGTHS = [1.0]
-LOW_NOISE_LORAS = [f"{MODEL_DIR}/loras/lightning_low_noise_model.safetensors"]
-LOW_NOISE_STRENGTHS = [1.0]
-
-# T5 text length
-TEXT_LEN = 512
 
 # ---------------------------------------------------------------------------
 # Text encoding
@@ -107,34 +92,27 @@ def encode_text(prompt: str) -> torch.Tensor:
 @torch.no_grad()
 def encode_image(image: PIL.Image.Image, vae: Wan2_1_VAE) -> torch.Tensor:
   """Returns the normalized image latent [1, 20, LAT_F, LAT_H, LAT_W]."""
-  # Preprocess: convert to [-1, 1] tensor
   img = pil_to_numpy(image)  # [1, H, W, 3]
   img = numpy_to_pt(img)  # [1, 3, H, W]
   img = normalize(img)  # [1, 3, H, W] in [-1, 1]
   img = img.unsqueeze(2)  # [1, 3, 1, H, W]
 
-  # Pad with zeros for remaining frames so VAE can infer latent temporal dim
   img = torch.cat(
-    [
-      img,
-      img.new_zeros(1, 3, NUM_FRAMES - 1, HEIGHT, WIDTH),
-    ],
+    [img, img.new_zeros(1, 3, NUM_FRAMES - 1, HEIGHT, WIDTH)],
     dim=2,
   ).to(DEVICE, dtype=VAE_DTYPE)  # [1, 3, 81, H, W]
 
-  # VAE encode
   latent_dist = vae.encode(img)
   latent_raw = latent_dist.mode()  # [1, 16, 21, H//8, W//8]
 
-  # Normalize: (raw - mean) / std
   mean = torch.tensor(LATENTS_MEAN, device=DEVICE, dtype=latent_raw.dtype).view(1, 16, 1, 1, 1)
   std = torch.tensor(LATENTS_STD, device=DEVICE, dtype=latent_raw.dtype).view(1, 16, 1, 1, 1)
   latent_norm = (latent_raw - mean) / std  # [1, 16, 21, H//8, W//8]
 
-  # Build mask [1, 4, 21, H//8, W//8]: 1 for frames belonging to the first pixel frame
   lat_h = HEIGHT // 8
   lat_w = WIDTH // 8
 
+  # Build mask: 1 for frames belonging to the first pixel frame
   mask = torch.ones(1, 1, NUM_FRAMES, lat_h, lat_w)
   mask[:, :, 1:] = 0
   first_mask = torch.repeat_interleave(mask[:, :, :1], repeats=4, dim=2)  # [1,1,4,H,W]
@@ -142,8 +120,7 @@ def encode_image(image: PIL.Image.Image, vae: Wan2_1_VAE) -> torch.Tensor:
   mask = mask.view(1, -1, 4, lat_h, lat_w).transpose(1, 2)  # [1,4,21,H,W]
   mask = mask.to(DEVICE, dtype=latent_norm.dtype)
 
-  image_latent = torch.cat([mask, latent_norm], dim=1)  # [1, 20, 21, H//8, W//8]
-  return image_latent
+  return torch.cat([mask, latent_norm], dim=1)  # [1, 20, 21, H//8, W//8]
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +135,7 @@ def decode_latents(latents: torch.Tensor, vae: Wan2_1_VAE) -> torch.Tensor:
   std = torch.tensor(LATENTS_STD, device=DEVICE, dtype=torch.float32).view(1, 16, 1, 1, 1)
   latents_raw = latents.float() * std + mean
   video = vae.decode(latents_raw)  # [1, 3, F, H, W] in [-1, 1]
-  video = (video / 2 + 0.5).clamp(0, 1)  # [0, 1]
-  return video
+  return (video / 2 + 0.5).clamp(0, 1)  # [0, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -219,22 +195,6 @@ def denoise(
 
 
 # ---------------------------------------------------------------------------
-# Save MP4
-# ---------------------------------------------------------------------------
-
-
-def save_mp4(video: torch.Tensor, path: str, fps: int = FPS) -> None:
-  """video: [1, 3, F, H, W] float32 in [0, 1]."""
-  frames = video[0].permute(1, 2, 3, 0).cpu().float().numpy()  # [F, H, W, 3]
-  frames = (frames * 255).clip(0, 255).astype(np.uint8)
-  writer = imageio.get_writer(path, fps=fps, codec="libx264", quality=8)
-  for frame in frames:
-    writer.append_data(frame)
-  writer.close()
-  print(f"Saved: {path}")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -282,19 +242,10 @@ def main():
   decode_seconds = time.perf_counter() - t_decode
   print(f"  Decoding: {decode_seconds:.2f}s")
 
-  # 6. Save
+  # 6. Save and summarize
   save_mp4(video, OUTPUT_PATH)
-
   total_seconds = time.perf_counter() - t_total
-  peak_vram_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
-
-  print(f"Total: {total_seconds:.2f}s")
-  print("---")
-  print(f"denoising_seconds: {denoising_seconds:.2f}")
-  print(f"total_seconds:     {total_seconds:.2f}")
-  print(f"load_seconds:      {load_seconds:.2f}")
-  print(f"decode_seconds:    {decode_seconds:.2f}")
-  print(f"peak_vram_mb:      {peak_vram_mb:.1f}")
+  print_summary(latents, denoising_seconds, total_seconds, load_seconds, decode_seconds)
 
 
 if __name__ == "__main__":
