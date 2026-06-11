@@ -34,69 +34,39 @@ def direct_register_custom_op(
     lib._register_fake(op_name, fake_impl)
 
 
-class CustomOpWrapper:
-  def __init__(self, op_name, op_func, mutates_args, **extra_kwargs):
-    self.op_name = op_name
-    self.op_func = op_func
-    self.mutates_args = mutates_args
-    self.extra_kwargs = extra_kwargs
-    self._impl: Callable | None = None
-
-  def __call__(self, *args, **kwargs):
-    return self.real_impl(*args, **kwargs)
-
-  @property
-  def real_impl(self) -> Callable:
-    if self._impl is None:
-      if not hasattr(torch.ops.sglang, self.op_name):
-        direct_register_custom_op(
-          op_name=self.op_name,
-          op_func=self.op_func,
-          mutates_args=self.mutates_args,
-          fake_impl=self.fake_impl,
-        )
-      self._impl = self.op_func
-    return self._impl
-
-  @property
-  def fake_impl(self) -> Callable:
-    if "fake_impl" in self.extra_kwargs:
-      return self.extra_kwargs["fake_impl"]
-    signature = inspect.signature(self.op_func)
-    out_shape = self.extra_kwargs.get("out_shape")
-
-    def _fake(*args, **kwargs):
-      if out_shape is None:
-        return None
-      bound = signature.bind(*args, **kwargs)
-      bound.apply_defaults()
-      try:
-        ref = bound.args[out_shape] if isinstance(out_shape, int) else bound.arguments[out_shape]
-      except (IndexError, KeyError) as err:
-        raise RuntimeError(f"Cannot find output at {out_shape!r} for op {self.op_name!r}") from err
-      return torch.empty_like(ref)
-
-    return _fake
-
-
 def register_custom_op(
   fn: Callable | None = None,
   *,
   op_name: str | None = None,
   mutates_args: list[str] | None = None,
   **extra_kwargs,
-) -> Any:
+) -> Callable:
   if not ("out_shape" in extra_kwargs or "fake_impl" in extra_kwargs):
     extra_kwargs["out_shape"] = None
 
   def decorator(op_func):
-    wrapper = CustomOpWrapper(
-      op_name=op_name or op_func.__name__,
-      op_func=op_func,
-      mutates_args=mutates_args or [],
-      **extra_kwargs,
-    )
-    return wrapper.real_impl
+    name = op_name or op_func.__name__
+    if "fake_impl" in extra_kwargs:
+      fake = extra_kwargs["fake_impl"]
+    else:
+      out_shape = extra_kwargs.get("out_shape")
+      signature = inspect.signature(op_func)
+
+      def _fake(*args, **kwargs):
+        if out_shape is None:
+          return None
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        try:
+          ref = bound.args[out_shape] if isinstance(out_shape, int) else bound.arguments[out_shape]
+        except (IndexError, KeyError) as err:
+          raise RuntimeError(f"Cannot find output at {out_shape!r} for op {name!r}") from err
+        return torch.empty_like(ref)
+
+      fake = _fake
+    if not hasattr(torch.ops.sglang, name):
+      direct_register_custom_op(op_name=name, op_func=op_func, mutates_args=mutates_args or [], fake_impl=fake)
+    return op_func
 
   if fn is not None:
     return decorator(fn)
@@ -198,51 +168,6 @@ import triton
 import triton.language as tl
 
 
-@triton.autotune(
-  configs=[
-    triton.Config({"BLOCK_N": 64}, num_warps=2),
-    triton.Config({"BLOCK_N": 128}, num_warps=4),
-    triton.Config({"BLOCK_N": 256}, num_warps=4),
-    triton.Config({"BLOCK_N": 512}, num_warps=4),
-    triton.Config({"BLOCK_N": 1024}, num_warps=8),
-  ],
-  key=["inner_dim"],
-)
-@triton.jit
-def _fused_scale_shift_4d_kernel(
-  output_ptr,
-  normalized_ptr,
-  scale_ptr,
-  shift_ptr,
-  scale_constant: tl.constexpr,
-  rows,
-  inner_dim,
-  seq_len,
-  num_frames,
-  frame_seqlen,
-  BLOCK_N: tl.constexpr,
-):
-  pid_row = tl.program_id(0)
-  pid_col = tl.program_id(1)
-  col_offsets = pid_col * BLOCK_N + tl.arange(0, BLOCK_N)
-  mask = col_offsets < inner_dim
-  row_base = pid_row * inner_dim
-  norm_ptrs = normalized_ptr + row_base + col_offsets
-  out_ptrs = output_ptr + row_base + col_offsets
-  b_idx = pid_row // seq_len
-  t_idx = pid_row % seq_len
-  frame_idx_in_batch = t_idx // frame_seqlen
-  scale_row_idx = b_idx * num_frames + frame_idx_in_batch
-  scale_ptrs = scale_ptr + scale_row_idx * inner_dim + col_offsets
-  shift_ptrs = shift_ptr + pid_row * inner_dim + col_offsets
-  normalized = tl.load(norm_ptrs, mask=mask, other=0.0)
-  scale = tl.load(scale_ptrs, mask=mask, other=0.0)
-  shift = tl.load(shift_ptrs, mask=mask, other=0.0)
-  scale_const_tensor = tl.full([BLOCK_N], scale_constant, dtype=scale.dtype)
-  output = normalized * (scale_const_tensor + scale) + shift
-  tl.store(out_ptrs, output, mask=mask)
-
-
 @triton.jit
 def _fuse_scale_shift_kernel_blc(
   x_ptr,
@@ -306,87 +231,61 @@ def fuse_scale_shift_kernel(
   B, L, C = x.shape
   output = torch.empty_like(x)
 
-  if scale.dim() == 4:
-    rows = B * L
-    x_2d = x.view(rows, C)
-    output_2d = output.view(rows, C)
-    num_frames = scale.shape[1]
-    assert L % num_frames == 0
-    frame_seqlen = L // num_frames
-    scale_reshaped = scale.squeeze(2).reshape(-1, C).contiguous()
-    shift_reshaped = shift.reshape(rows, C).contiguous()
-
-    def grid(meta):
-      return (rows, triton.cdiv(C, meta["BLOCK_N"]))
-
-    _fused_scale_shift_4d_kernel[grid](
-      output_2d,
-      x_2d,
-      scale_reshaped,
-      shift_reshaped,
-      scale_constant,
-      rows,
-      C,
-      L,
-      num_frames,
-      frame_seqlen,
-    )
+  if scale.dim() == 0 or (scale.dim() == 1 and scale.numel() == 1):
+    scale_blc = scale.reshape(1)
+  elif scale.dim() == 2:
+    scale_blc = scale[:, None, :]
   else:
-    if scale.dim() == 0 or (scale.dim() == 1 and scale.numel() == 1):
-      scale_blc = scale.reshape(1)
-    elif scale.dim() == 2:
-      scale_blc = scale[:, None, :]
-    else:
-      scale_blc = scale
+    scale_blc = scale
 
-    if shift.dim() == 0 or (shift.dim() == 1 and shift.numel() == 1):
-      shift_blc = shift.reshape(1)
-    elif shift.dim() == 2:
-      shift_blc = shift[:, None, :]
-    else:
-      shift_blc = shift
+  if shift.dim() == 0 or (shift.dim() == 1 and shift.numel() == 1):
+    shift_blc = shift.reshape(1)
+  elif shift.dim() == 2:
+    shift_blc = shift[:, None, :]
+  else:
+    shift_blc = shift
 
-    need_scale_scalar = scale_blc.dim() == 1 and scale_blc.numel() == 1
-    need_shift_scalar = shift_blc.dim() == 1 and shift_blc.numel() == 1
+  need_scale_scalar = scale_blc.dim() == 1 and scale_blc.numel() == 1
+  need_shift_scalar = shift_blc.dim() == 1 and shift_blc.numel() == 1
 
-    if not need_scale_scalar:
-      scale_exp = scale_blc.expand(B, L, C)
-      s_sb, s_sl, s_sc = scale_exp.stride()
-    else:
-      s_sb = s_sl = s_sc = 0
+  if not need_scale_scalar:
+    scale_exp = scale_blc.expand(B, L, C)
+    s_sb, s_sl, s_sc = scale_exp.stride()
+  else:
+    s_sb = s_sl = s_sc = 0
 
-    if not need_shift_scalar:
-      shift_exp = shift_blc.expand(B, L, C)
-      sh_sb, sh_sl, sh_sc = shift_exp.stride()
-    else:
-      sh_sb = sh_sl = sh_sc = 0
+  if not need_shift_scalar:
+    shift_exp = shift_blc.expand(B, L, C)
+    sh_sb, sh_sl, sh_sc = shift_exp.stride()
+  else:
+    sh_sb = sh_sl = sh_sc = 0
 
-    grid = (triton.cdiv(L, block_l), triton.cdiv(C, block_c), B)
-    _fuse_scale_shift_kernel_blc[grid](
-      x,
-      shift_blc if need_shift_scalar else shift_exp,
-      scale_blc if need_scale_scalar else scale_exp,
-      scale_constant,
-      output,
-      B,
-      L,
-      C,
-      x.stride(0),
-      x.stride(1),
-      x.stride(2),
-      sh_sb,
-      sh_sl,
-      sh_sc,
-      s_sb,
-      s_sl,
-      s_sc,
-      SCALE_IS_SCALAR=need_scale_scalar,
-      SHIFT_IS_SCALAR=need_shift_scalar,
-      BLOCK_L=block_l,
-      BLOCK_C=block_c,
-      num_warps=4,
-      num_stages=2,
-    )
+  grid = (triton.cdiv(L, block_l), triton.cdiv(C, block_c), B)
+  _fuse_scale_shift_kernel_blc[grid](
+    x,
+    shift_blc if need_shift_scalar else shift_exp,
+    scale_blc if need_scale_scalar else scale_exp,
+    scale_constant,
+    output,
+    B,
+    L,
+    C,
+    x.stride(0),
+    x.stride(1),
+    x.stride(2),
+    sh_sb,
+    sh_sl,
+    sh_sc,
+    s_sb,
+    s_sl,
+    s_sc,
+    SCALE_IS_SCALAR=need_scale_scalar,
+    SHIFT_IS_SCALAR=need_shift_scalar,
+    BLOCK_L=block_l,
+    BLOCK_C=block_c,
+    num_warps=4,
+    num_stages=2,
+  )
   return output
 
 
@@ -474,27 +373,22 @@ def flash_attn_varlen_func(
   softmax_scale=None,
   causal=False,
   qv=None,
-  q_descale=None,
-  k_descale=None,
-  v_descale=None,
   window_size=(-1, -1),
-  attention_chunk=0,
   softcap=0.0,
   num_splits=1,
   pack_gqa=None,
-  sm_margin=0,
-  return_softmax_lse=False,
-  sinks=None,
+  return_lse=False,
   score_mod=None,
   aux_tensors=None,
-  out=None,
 ):
   if _flash_attn_varlen_func is None:
     raise RuntimeError("flash_attn not available")
-  return _flash_attn_varlen_func(
+  ws = tuple(None if v == -1 else v for v in window_size)
+  out, lse = _flash_attn_varlen_func(
     q,
     k,
     v,
+    qv=qv,
     cu_seqlens_q=cu_seqlens_q,
     cu_seqlens_k=cu_seqlens_k,
     max_seqlen_q=max_seqlen_q,
@@ -505,14 +399,14 @@ def flash_attn_varlen_func(
     softmax_scale=softmax_scale,
     causal=causal,
     softcap=softcap,
-    window_size=window_size,
-    sinks=sinks,
+    window_size=ws,
     num_splits=num_splits,
     pack_gqa=pack_gqa,
     score_mod=score_mod,
     aux_tensors=aux_tensors,
-    return_softmax_lse=return_softmax_lse,
+    return_lse=return_lse,
   )
+  return (out, lse) if return_lse else out
 
 
 def _flash_attn_varlen_func_fake(
@@ -555,20 +449,13 @@ def flash_attn_varlen_func_op(
   softmax_scale: float | None = None,
   causal: bool = False,
   qv: torch.Tensor | None = None,
-  q_descale: torch.Tensor | None = None,
-  k_descale: torch.Tensor | None = None,
-  v_descale: torch.Tensor | None = None,
   window_size: list[int] | None = None,
-  attention_chunk: int = 0,
   softcap: float = 0.0,
   num_splits: int = 1,
   pack_gqa: bool | None = None,
-  sm_margin: int = 0,
-  return_softmax_lse: bool = False,
-  sinks: torch.Tensor | None = None,
+  return_lse: bool = False,
 ) -> torch.Tensor:
-  if window_size is None:
-    window_size = [-1, -1]
+  ws = tuple(window_size) if window_size is not None else (-1, -1)
   return flash_attn_varlen_func(
     q,
     k,
@@ -583,17 +470,11 @@ def flash_attn_varlen_func_op(
     softmax_scale=softmax_scale,
     causal=causal,
     qv=qv,
-    q_descale=q_descale,
-    k_descale=k_descale,
-    v_descale=v_descale,
-    window_size=tuple(window_size),
-    attention_chunk=attention_chunk,
+    window_size=ws,
     softcap=softcap,
     num_splits=num_splits,
     pack_gqa=pack_gqa,
-    sm_margin=sm_margin,
-    return_softmax_lse=False,
-    sinks=sinks,
+    return_lse=return_lse,
   )
 
 
@@ -660,7 +541,7 @@ class RMSNorm(CustomOp):
     if x.dtype == torch.float:
       if residual is None and self.variance_size_override is None:
         return self.forward_native(x).view(shape)
-      out = self.forward_triton(x, residual)
+      out = self.forward_native(x, residual)
       if residual is not None:
         return out[0].view(shape), out[1].view(residual_shape)
       return out.view(shape)
@@ -699,10 +580,6 @@ class FP32LayerNorm(nn.LayerNorm):
     ).to(origin_dtype)
 
 
-def _ensure_contiguous(t: torch.Tensor | None) -> torch.Tensor | None:
-  return t.contiguous() if t is not None else None
-
-
 class _ScaleResidualNormScaleShift(CustomOp):
   norm_type: str
 
@@ -730,12 +607,7 @@ class _ScaleResidualNormScaleShift(CustomOp):
       assert gate == 1
       residual_output = residual + x
     elif isinstance(gate, torch.Tensor):
-      if gate.dim() == 4:
-        num_frames = gate.shape[1]
-        frame_seqlen = x.shape[1] // num_frames
-        residual_output = residual + (x.unflatten(dim=1, sizes=(num_frames, frame_seqlen)) * gate).flatten(1, 2)
-      else:
-        residual_output = residual + x * gate
+      residual_output = residual + x * gate
     normalized = self.norm(residual_output)
     modulated = fuse_scale_shift_kernel(normalized, scale, shift)
     return modulated, residual_output
@@ -785,10 +657,6 @@ class MulAdd(CustomOp):
     super().__init__()
 
   def forward_native(self, a, b, c, k: int = 0):
-    if b.dim() == 4:
-      num_frames = b.shape[1]
-      frame_seqlen = a.shape[1] // num_frames
-      return c + (a.unflatten(dim=1, sizes=(num_frames, frame_seqlen)) * (k + b)).flatten(1, 2)
     return c + a * (k + b)
 
   def forward_cuda(self, a, b, c, k: int = 0):
@@ -828,14 +696,10 @@ class TimestepEmbedder(nn.Module):
     self.mlp = MLP(frequency_embedding_size, hidden_size, hidden_size, act_type=act_layer)
     self.freq_dtype = freq_dtype
 
-  def forward(self, t: torch.Tensor, timestep_seq_len: int | None = None) -> torch.Tensor:
+  def forward(self, t: torch.Tensor) -> torch.Tensor:
     t_freq = timestep_embedding(t, self.frequency_embedding_size, self.max_period, dtype=self.freq_dtype).to(
       self.mlp.fc_in.weight.dtype
     )
-    if timestep_seq_len is not None:
-      assert t_freq.shape[0] % timestep_seq_len == 0
-      batch_size = t_freq.shape[0] // timestep_seq_len
-      t_freq = t_freq.unflatten(0, (batch_size, timestep_seq_len))
     return self.mlp(t_freq)
 
 
@@ -1130,11 +994,8 @@ class WanAttention(nn.Module):
       q=q,
       k=k,
       v=v,
-      cu_seqlens_q=None,
-      cu_seqlens_k=None,
       max_seqlen_q=q.shape[1],
       max_seqlen_k=k.shape[1],
       softmax_scale=self.softmax_scale,
       causal=self.causal,
-      return_softmax_lse=False,
     )

@@ -153,8 +153,8 @@ class WanTimeTextImageEmbedding(nn.Module):
     self.time_modulation = ModulateProjection(dim, factor=6, act_layer="silu")
     self.text_embedder = MLP(text_embed_dim, dim, dim, act_type="gelu_pytorch_tanh")
 
-  def forward(self, timestep, encoder_hidden_states_text, timestep_seq_len=None):
-    temb = self.time_embedder(timestep, timestep_seq_len)
+  def forward(self, timestep, encoder_hidden_states_text):
+    temb = self.time_embedder(timestep)
     timestep_proj = self.time_modulation(temb).unflatten(-1, (6, -1))
     encoder_hidden_states_text = self.text_embedder(encoder_hidden_states_text)
     return temb, timestep_proj, encoder_hidden_states_text
@@ -224,11 +224,7 @@ class WanModel(nn.Module):
     hidden_states = self.patch_embedding(hidden_states)
     hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
-    ts_seq_len = None
-
-    temb, timestep_proj, encoder_hidden_states = self.condition_embedder(
-      timestep, encoder_hidden_states, timestep_seq_len=ts_seq_len
-    )
+    temb, timestep_proj, encoder_hidden_states = self.condition_embedder(timestep, encoder_hidden_states)
 
     for block in self.blocks:
       hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, freqs_cis)
@@ -251,7 +247,7 @@ class WanModel(nn.Module):
 
     t1 = time.perf_counter()
     mapping_fn = get_param_names_mapping(self.PARAM_NAMES_MAPPING)
-    state_dict = {mapping_fn(k)[0]: v for k, v in state_dict.items()}
+    state_dict = {mapping_fn(k): v for k, v in state_dict.items()}
     t_rename = time.perf_counter() - t1
 
     t2 = time.perf_counter()

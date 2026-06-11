@@ -25,12 +25,12 @@ from vae import LATENTS_MEAN, LATENTS_STD, Wan2_1_VAE
 # ---------------------------------------------------------------------------
 
 IMAGE_PATH = "./i2v_input.JPG"
-PROMPT = "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."
+PROMPT = "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."  # noqa: E501
 OUTPUT_PATH = "output.mp4"
 
 # Inference geometry
-HEIGHT = 480
-WIDTH = 832
+HEIGHT = 832
+WIDTH = 480
 NUM_FRAMES = 81  # pixel frames; latent frames = 1 + (81-1)//4 = 21
 NUM_STEPS = 8  # total steps; first half = high noise, second = low noise
 FLOW_SHIFT = 5.0

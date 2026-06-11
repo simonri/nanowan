@@ -1,6 +1,5 @@
 """Flow-matching Euler discrete scheduler (minimal, no diffusers dependency)."""
 
-
 import numpy as np
 import torch
 
