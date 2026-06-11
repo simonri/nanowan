@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8"]
+__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -48,6 +48,33 @@ class FP8Linear(nn.Module):
     x_2d = x.reshape(-1, self.in_features)
     amax = x_2d.abs().amax().float()
     scale_a = (amax / _FP8_MAX).clamp_min(1e-12).reshape(1)
+    x_fp8 = (x_2d.float() / scale_a).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
+    if self.bias is not None:
+      out = out + self.bias.to(out.dtype)
+    return out.reshape(*orig_shape[:-1], self.out_features)
+
+
+class RowWiseFP8Linear(nn.Module):
+  """FP8 linear with per-token (row-wise) activation scale — more accurate for noisy activations."""
+
+  def __init__(self, weight_fp16: torch.Tensor, bias: torch.Tensor | None = None):
+    super().__init__()
+    out_features, in_features = weight_fp16.shape
+    self.in_features = in_features
+    self.out_features = out_features
+    amax = weight_fp16.detach().float().abs().amax()
+    scale = (amax / _FP8_MAX).clamp_min(1e-12)
+    w_fp8 = (weight_fp16.detach().float() / scale).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    self.register_buffer("weight", w_fp8)
+    self.register_buffer("weight_scale", scale.float().reshape(1))
+    self.bias = nn.Parameter(bias.clone()) if bias is not None else None
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    orig_shape = x.shape
+    x_2d = x.reshape(-1, self.in_features)
+    amax = x_2d.abs().amax(dim=1, keepdim=True).float()  # (M, 1) — per-token
+    scale_a = (amax / _FP8_MAX).clamp_min(1e-12)
     x_fp8 = (x_2d.float() / scale_a).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
     out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
     if self.bias is not None:
@@ -81,6 +108,19 @@ def replace_last_n_ffn_with_fp8(model: "WanModel", n: int) -> None:
     ffn = block.ffn
     ffn.fc_in = FP8Linear(ffn.fc_in.weight, ffn.fc_in.bias)
     ffn.fc_out = FP8Linear(ffn.fc_out.weight, ffn.fc_out.bias)
+
+
+def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
+  """Replace attention projection linears in the last n blocks with rowwise FP8."""
+  for block in model.blocks[-n:]:
+    block.to_q = RowWiseFP8Linear(block.to_q.weight, block.to_q.bias)
+    block.to_k = RowWiseFP8Linear(block.to_k.weight, block.to_k.bias)
+    block.to_v = RowWiseFP8Linear(block.to_v.weight, block.to_v.bias)
+    block.to_out = RowWiseFP8Linear(block.to_out.weight, block.to_out.bias)
+    block.attn2.to_q = RowWiseFP8Linear(block.attn2.to_q.weight, block.attn2.to_q.bias)
+    block.attn2.to_k = RowWiseFP8Linear(block.attn2.to_k.weight, block.attn2.to_k.bias)
+    block.attn2.to_v = RowWiseFP8Linear(block.attn2.to_v.weight, block.attn2.to_v.bias)
+    block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
 
 
 # Checkpoint key → model key remapping
