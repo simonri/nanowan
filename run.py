@@ -223,7 +223,7 @@ def main():
 
   print("Loading low-noise transformer...")
   low_model = load_transformer(LOW_NOISE_PATH, LOW_NOISE_LORAS, LOW_NOISE_STRENGTHS)
-  replace_ffn_linears_with_fp8(high_model)  # FP8 for high-noise steps only; low-noise stays fp16
+  replace_ffn_linears_with_fp8(low_model)  # FP8 for low-noise steps only; high-noise stays fp16
 
   load_seconds = time.perf_counter() - t_total
 
