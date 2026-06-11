@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8"]
+__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -73,6 +73,15 @@ def replace_attn_linears_with_fp8(model: "WanModel") -> None:
     block.attn2.to_k = FP8Linear(block.attn2.to_k.weight, block.attn2.to_k.bias)
     block.attn2.to_v = FP8Linear(block.attn2.to_v.weight, block.attn2.to_v.bias)
     block.attn2.to_out = FP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
+
+
+def replace_last_n_ffn_with_fp8(model: "WanModel", n: int) -> None:
+  """Replace FFN linears in the last n transformer blocks with FP8."""
+  for block in model.blocks[-n:]:
+    ffn = block.ffn
+    ffn.fc_in = FP8Linear(ffn.fc_in.weight, ffn.fc_in.bias)
+    ffn.fc_out = FP8Linear(ffn.fc_out.weight, ffn.fc_out.bias)
+
 
 # Checkpoint key → model key remapping
 PARAM_NAMES_MAPPING = {
