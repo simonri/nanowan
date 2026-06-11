@@ -226,6 +226,22 @@ def main():
 
   load_seconds = time.perf_counter() - t_total
 
+  # Compile and warm up both models before the denoising timer starts
+  print("Compiling models (warmup before timer)...")
+  high_model = torch.compile(high_model, mode="default")
+  low_model = torch.compile(low_model, mode="default")
+  lat_h_w = HEIGHT // 8
+  lat_w_w = WIDTH // 8
+  lat_f_w = 1 + (NUM_FRAMES - 1) // 4
+  _dummy = torch.zeros(1, 36, lat_f_w, lat_h_w, lat_w_w, device=DEVICE, dtype=DIT_DTYPE)
+  _ts = torch.tensor([500.0], device=DEVICE, dtype=torch.float32)
+  _enc = prompt_embeds.to(DEVICE, dtype=DIT_DTYPE)
+  with torch.no_grad(), torch.amp.autocast("cuda", dtype=DIT_DTYPE):
+    _ = high_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
+    _ = low_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
+  torch.cuda.synchronize()
+  del _dummy, _ts, _enc
+
   # 4. Denoise
   print(f"Denoising ({NUM_STEPS} steps: {NUM_STEPS // 2} high-noise + {NUM_STEPS // 2} low-noise)...")
   t_denoise = time.perf_counter()
