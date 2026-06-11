@@ -67,27 +67,30 @@ grep "^denoising_seconds:" run.log
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 6 columns:
 
 ```
-commit	denoising_s	memory_gb	status	description
+commit	denoising_s	memory_gb	latent_rmse	status	description
 ```
 
 1. git commit hash (short, 7 chars)
 2. denoising_seconds (e.g. 38.90) — use 0.00 for crashes
 3. peak memory in GB, round to .1f (e.g. 44.1 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+4. latent_rmse from `grep "^latent_rmse:" run.log` — use N/A for crashes
+5. status: `keep`, `discard`, or `crash`
+6. short text description of what this experiment tried
 
 Example:
 
 ```
-commit	denoising_s	memory_gb	status	description
-a1b2c3d	38.90	44.0	keep	baseline
-b2c3d4e	32.00	44.2	keep	torch.compile denoising loop
-c3d4e5f	40.00	44.0	discard	fp32 denoise (slower)
-d4e5f6g	0.00	0.0	crash	INT8 quantization (kernel error)
+commit	denoising_s	memory_gb	latent_rmse	status	description
+a1b2c3d	38.90	44.0	0.000000	keep	baseline
+b2c3d4e	32.00	44.2	0.001234	keep	torch.compile denoising loop
+c3d4e5f	40.00	44.0	0.350000	discard	fp8 (RMSE too high)
+d4e5f6g	0.00	0.0	N/A	crash	INT8 quantization (kernel error)
 ```
+
+**Quality constraint**: `latent_rmse` must stay below **0.15**. Changes that push RMSE above 0.15 must be reverted even if they are faster. Log the RMSE for every experiment — a "keep" result must satisfy BOTH lower denoising_seconds AND latent_rmse < 0.15.
 
 ## The experiment loop
 
@@ -99,7 +102,7 @@ LOOP FOREVER:
 2. Tune a `.py` file with an experimental idea by directly hacking the code.
 3. git commit
 4. Run the experiment: `uv run run.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^denoising_seconds:\|^peak_vram_mb:" run.log`
+5. Read out the results: `grep "^denoising_seconds:\|^peak_vram_mb:\|^latent_rmse:" run.log`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
 7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
 8. If denoising_seconds improved (lower), you "advance" the branch, keeping the git commit
