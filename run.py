@@ -224,7 +224,7 @@ def main():
   print("Loading low-noise transformer...")
   low_model = load_transformer(LOW_NOISE_PATH, LOW_NOISE_LORAS, LOW_NOISE_STRENGTHS)
   replace_last_n_ffn_with_fp8(high_model, n=25)           # last 25/40 high-noise blocks FP8 FFN
-  replace_last_n_attn_with_rowwise_fp8(high_model, n=10)  # last 10 blocks attn rowwise FP8 (per-token scale)
+  replace_last_n_attn_with_rowwise_fp8(high_model, n=15)  # last 15/40 blocks attn rowwise FP8
   replace_ffn_linears_with_fp8(low_model)        # FP8 for low-noise steps only; high-noise stays fp16
   replace_attn_linears_with_fp8(low_model)       # attn projections are RMSNorm outputs (Gaussian → good FP8)
 
