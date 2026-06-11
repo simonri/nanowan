@@ -23,7 +23,43 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel"]
+__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8"]
+
+_FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
+
+
+class FP8Linear(nn.Module):
+  """FP8 linear via _scaled_mm with per-tensor dynamic activation scale."""
+
+  def __init__(self, weight_fp16: torch.Tensor, bias: torch.Tensor | None = None):
+    super().__init__()
+    out_features, in_features = weight_fp16.shape
+    self.in_features = in_features
+    self.out_features = out_features
+    amax = weight_fp16.detach().float().abs().amax()
+    scale = (amax / _FP8_MAX).clamp_min(1e-12)
+    w_fp8 = (weight_fp16.detach().float() / scale).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    self.register_buffer("weight", w_fp8)
+    self.register_buffer("weight_scale", scale.float().reshape(1))
+    self.bias = nn.Parameter(bias.clone()) if bias is not None else None
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    orig_shape = x.shape
+    x_2d = x.reshape(-1, self.in_features)
+    amax = x_2d.abs().amax().float()
+    scale_a = (amax / _FP8_MAX).clamp_min(1e-12).reshape(1)
+    x_fp8 = (x_2d.float() / scale_a).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
+    if self.bias is not None:
+      out = out + self.bias.to(out.dtype)
+    return out.reshape(*orig_shape[:-1], self.out_features)
+
+
+def replace_ffn_linears_with_fp8(model: "WanModel") -> None:
+  for block in model.blocks:
+    ffn = block.ffn
+    ffn.fc_in = FP8Linear(ffn.fc_in.weight, ffn.fc_in.bias)
+    ffn.fc_out = FP8Linear(ffn.fc_out.weight, ffn.fc_out.bias)
 
 # Checkpoint key → model key remapping
 PARAM_NAMES_MAPPING = {
