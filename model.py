@@ -67,7 +67,7 @@ class RowWiseFP8Linear(nn.Module):
     scale = (amax / _FP8_MAX).clamp_min(1e-12)
     w_fp8 = (weight_fp16.detach().float() / scale).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
     self.register_buffer("weight", w_fp8)
-    self.register_buffer("weight_scale", scale.float().reshape(1))
+    self.register_buffer("weight_scale", scale.float().reshape(1, 1))  # 2D required for rowwise _scaled_mm
     self.bias = nn.Parameter(bias.clone()) if bias is not None else None
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
