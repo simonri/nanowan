@@ -46,9 +46,10 @@ class FP8Linear(nn.Module):
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     orig_shape = x.shape
     x_2d = x.reshape(-1, self.in_features)
-    amax = x_2d.abs().amax().float()
+    amax = x_2d.abs().amax().float()  # fp32 scalar for scale math
     scale_a = (amax / _FP8_MAX).clamp_min(1e-12).reshape(1)
-    x_fp8 = (x_2d.float() / scale_a).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    # skip bf16→fp32 upcasting: fp8 has only 3 mantissa bits so bf16 precision is sufficient
+    x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
     out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
     if self.bias is not None:
       out = out + self.bias.to(out.dtype)
@@ -74,9 +75,9 @@ class RowWiseFP8Linear(nn.Module):
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     orig_shape = x.shape
     x_2d = x.reshape(-1, self.in_features)
-    amax = x_2d.abs().amax(dim=1, keepdim=True).float()  # (M, 1) — per-token
+    amax = x_2d.abs().amax(dim=1, keepdim=True).float()  # (M, 1) fp32 for scale math
     scale_a = (amax / _FP8_MAX).clamp_min(1e-12)
-    x_fp8 = (x_2d.float() / scale_a).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
     out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
     if self.bias is not None:
       out = out + self.bias.to(out.dtype)
