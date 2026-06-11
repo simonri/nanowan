@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from lora import apply_loras
-from model import WanModel, replace_ffn_linears_with_fp8
+from model import WanModel, replace_attn_linears_with_fp8, replace_ffn_linears_with_fp8
 from prepare import (
   DIT_DTYPE,
   FLOW_SHIFT,
@@ -223,7 +223,8 @@ def main():
 
   print("Loading low-noise transformer...")
   low_model = load_transformer(LOW_NOISE_PATH, LOW_NOISE_LORAS, LOW_NOISE_STRENGTHS)
-  replace_ffn_linears_with_fp8(low_model)  # FP8 for low-noise steps only; high-noise stays fp16
+  replace_ffn_linears_with_fp8(low_model)   # FP8 for low-noise steps only; high-noise stays fp16
+  replace_attn_linears_with_fp8(low_model)  # attn projections are RMSNorm outputs (Gaussian → good FP8)
 
   load_seconds = time.perf_counter() - t_total
 

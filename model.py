@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8"]
+__all__ = ["WanModel", "FP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -60,6 +60,19 @@ def replace_ffn_linears_with_fp8(model: "WanModel") -> None:
     ffn = block.ffn
     ffn.fc_in = FP8Linear(ffn.fc_in.weight, ffn.fc_in.bias)
     ffn.fc_out = FP8Linear(ffn.fc_out.weight, ffn.fc_out.bias)
+
+
+def replace_attn_linears_with_fp8(model: "WanModel") -> None:
+  """Replace attention projection linears with FP8 — inputs are RMSNorm outputs (Gaussian)."""
+  for block in model.blocks:
+    block.to_q = FP8Linear(block.to_q.weight, block.to_q.bias)
+    block.to_k = FP8Linear(block.to_k.weight, block.to_k.bias)
+    block.to_v = FP8Linear(block.to_v.weight, block.to_v.bias)
+    block.to_out = FP8Linear(block.to_out.weight, block.to_out.bias)
+    block.attn2.to_q = FP8Linear(block.attn2.to_q.weight, block.attn2.to_q.bias)
+    block.attn2.to_k = FP8Linear(block.attn2.to_k.weight, block.attn2.to_k.bias)
+    block.attn2.to_v = FP8Linear(block.attn2.to_v.weight, block.attn2.to_v.bias)
+    block.attn2.to_out = FP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
 
 # Checkpoint key → model key remapping
 PARAM_NAMES_MAPPING = {
