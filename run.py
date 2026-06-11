@@ -240,6 +240,7 @@ def save_mp4(video: torch.Tensor, path: str, fps: int = FPS) -> None:
 
 
 def main():
+  torch.cuda.reset_peak_memory_stats()
   t_total = time.perf_counter()
 
   # 1. Encode text (unloads T5 after)
@@ -263,23 +264,37 @@ def main():
   print("Loading low-noise transformer...")
   low_model = load_transformer(LOW_NOISE_PATH, LOW_NOISE_LORAS, LOW_NOISE_STRENGTHS)
 
+  load_seconds = time.perf_counter() - t_total
+
   # 4. Denoise
   print(f"Denoising ({NUM_STEPS} steps: {NUM_STEPS // 2} high-noise + {NUM_STEPS // 2} low-noise)...")
   t_denoise = time.perf_counter()
   latents = denoise(prompt_embeds, image_latent, high_model, low_model)
   torch.cuda.synchronize()
-  print(f"  Denoising: {time.perf_counter() - t_denoise:.2f}s")
+  denoising_seconds = time.perf_counter() - t_denoise
+  print(f"  Denoising: {denoising_seconds:.2f}s")
 
   # 5. Decode with VAE
   print("Decoding...")
   t_decode = time.perf_counter()
   video = decode_latents(latents, vae)
   torch.cuda.synchronize()
-  print(f"  Decoding: {time.perf_counter() - t_decode:.2f}s")
+  decode_seconds = time.perf_counter() - t_decode
+  print(f"  Decoding: {decode_seconds:.2f}s")
 
   # 6. Save
   save_mp4(video, OUTPUT_PATH)
-  print(f"Total: {time.perf_counter() - t_total:.2f}s")
+
+  total_seconds = time.perf_counter() - t_total
+  peak_vram_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+
+  print(f"Total: {total_seconds:.2f}s")
+  print("---")
+  print(f"denoising_seconds: {denoising_seconds:.2f}")
+  print(f"total_seconds:     {total_seconds:.2f}")
+  print(f"load_seconds:      {load_seconds:.2f}")
+  print(f"decode_seconds:    {decode_seconds:.2f}")
+  print(f"peak_vram_mb:      {peak_vram_mb:.1f}")
 
 
 if __name__ == "__main__":
