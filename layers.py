@@ -358,6 +358,13 @@ try:
 except Exception:
   _flash_attn_varlen_func = None
 
+try:
+  import flash_attn_3._C  # registers FA3 ops with PyTorch
+  from flash_attn_interface import flash_attn_func as _flash_attn_fa3_func
+  _FA3_AVAILABLE = True
+except Exception:
+  _FA3_AVAILABLE = False
+
 
 def flash_attn_varlen_func(
   q,
@@ -990,6 +997,10 @@ class WanAttention(nn.Module):
     self.causal = causal
 
   def forward(self, q, k, v):
+    # FA3 is better-tuned for H100 than FA4; use for large KV (self-attn) and small KV (cross-attn)
+    if _FA3_AVAILABLE:
+      out = _flash_attn_fa3_func(q, k, v, softmax_scale=self.softmax_scale, causal=self.causal)
+      return out.to(q.dtype)
     return flash_attn_varlen_func_op(
       q=q,
       k=k,
