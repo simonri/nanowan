@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanowan"
+version = "0.1.0"
+description = "Minimal WAN 2.2 image-to-video inference"
+requires-python = "==3.10.*"
+dependencies = [
+  "torch==2.11.0",
+  "transformers>=4.49.0",
+  "tokenizers>=0.20.3",
+  "safetensors",
+  "tqdm",
+  "imageio[pyav]",
+  "imageio-ffmpeg",
+  "numpy>=1.23.5,<2",
+  "pillow",
+  "flash_attn_3",
+  "flashinfer-python",
+  "ruff>=0.15.12",
+  "triton>=3.6.0",
+  "sglang-kernel",
+  "flash-attn-4>=4.0.0b12",
+]
+
+[[tool.uv.index]]
+name = "pytorch-stable-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+
+[[tool.uv.index]]
+name = "flashinfer-nightly"
+url = "https://flashinfer.ai/whl/nightly/"
+explicit = true
+
+[[tool.uv.index]]
+name = "sglang-cu129"
+url = "https://docs.sglang.ai/whl/cu129/"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-stable-cu129" }
+triton = { index = "pytorch-stable-cu129" }
+sglang-kernel = { index = "sglang-cu129" }
+flash_attn_3 = { url = "https://github.com/simonri/flash-attention-3-h100/releases/download/v1.0.0/flash_attn_3-3.0.0b1-cp39-abi3-linux_x86_64.whl" }
+flashinfer-python = { index = "flashinfer-nightly" }
+
+[tool.uv]
+prerelease = "allow"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+index-strategy = "unsafe-best-match"
+
+[tool.ruff]
+indent-width = 2
+line-length = 120
+target-version = "py310"
+
+exclude = [
+  ".venv",
+  "**/__pycache__",
+  "**/.pytest_cache",
+  "**/.ruff_cache",
+  "**/.git",
+]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",      # pycodestyle + pyflakes
+  "PIE", "C4", "ISC", # misc improvements
+  "A", "B",           # flake8-builtins + bugbear
+  "NPY",              # numpy-specific rules
+  "UP",               # pyupgrade
+  "I",                # import ordering
+  "TRY203", "TRY400", "TRY401", # try/except best practices
+  "RUF008", "RUF100", # ruff-specific rules
+  "TID251",           # banned imports
+  "PLR1704",          # pylint rules
+]
+
+ignore = [
+  "E741",   # ambiguous variable name
+  "E402",   # module level import not at top
+  "C408",   # unnecessary dict call
+  "ISC003", # explicit string concatenation
+  "B027",   # empty method without abstract decorator
+  "B024",   # abstract base class without abstract methods
+  "NPY002", # old numpy random syntax (we prefer it)
+]
+
+[tool.ruff.lint.flake8-implicit-str-concat]
+allow-multiline = false
+
+[tool.ruff.format]
+quote-style = "preserve"
+docstring-code-format = true
+line-ending = "auto"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false

@@ -1,0 +1,16 @@
+__pycache__/
+.DS_Store
+.vscode*
+tmp_examples*
+new_checkpoint*
+batch_test*
+nohup*
+nanowan.egg-info
+*.pt
+*.mp4
+traces/
+.cuda-nvcc
+cache
+examples
+.torchinductor/
+logs
