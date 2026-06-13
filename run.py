@@ -232,8 +232,8 @@ def main():
 
   # Compile and warm up both models before the denoising timer starts
   print("Compiling models (warmup before timer)...")
-  high_model = torch.compile(high_model, mode="max-autotune-no-cudagraphs")
-  low_model = torch.compile(low_model, mode="max-autotune-no-cudagraphs")
+  high_model = torch.compile(high_model, mode="default")
+  low_model = torch.compile(low_model, mode="default")
   lat_h_w = HEIGHT // 8
   lat_w_w = WIDTH // 8
   lat_f_w = 1 + (NUM_FRAMES - 1) // 4
