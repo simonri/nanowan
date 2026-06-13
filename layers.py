@@ -997,10 +997,21 @@ class WanAttention(nn.Module):
     self.causal = causal
 
   def forward(self, q, k, v):
-    # FA3 is better-tuned for H100 than FA4; use for large KV (self-attn) and small KV (cross-attn)
-    if _FA3_AVAILABLE:
+    seqlen_k = k.shape[1]
+    if _FA3_AVAILABLE and seqlen_k > 1024:
+      # Self-attention (K=8190): FA3 is essential to avoid materializing the full attention matrix
       out = _flash_attn_fa3_func(q, k, v, softmax_scale=self.softmax_scale, causal=self.causal)
       return out.to(q.dtype)
+    if seqlen_k <= 1024:
+      # Cross-attention (K=512): standard matmul is faster than FA3 for small KV.
+      # FA3's overhead (tiling, partial softmax merge) isn't amortized at K=512.
+      # q/k/v: [B, seqlen, heads, head_dim] → need [B, heads, seqlen, head_dim] for matmul
+      scale = self.softmax_scale if self.softmax_scale is not None else (q.shape[-1] ** -0.5)
+      q_t = q.transpose(1, 2)  # [B, heads, seqlen_q, head_dim]
+      k_t = k.transpose(1, 2)  # [B, heads, seqlen_k, head_dim]
+      v_t = v.transpose(1, 2)
+      attn = torch.softmax(torch.matmul(q_t, k_t.transpose(-2, -1)) * scale, dim=-1)
+      return torch.matmul(attn, v_t).transpose(1, 2).to(q.dtype)
     return flash_attn_varlen_func_op(
       q=q,
       k=k,
