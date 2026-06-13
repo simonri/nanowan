@@ -6,6 +6,7 @@ import time
 import torch
 import torch.nn as nn
 from safetensors.torch import load_file as safetensors_load_file
+from sgl_kernel import sgl_per_token_quant_fp8 as _sgl_quant_fp8
 
 from layers import (
   MLP,
@@ -75,10 +76,11 @@ class RowWiseFP8Linear(nn.Module):
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     orig_shape = x.shape
     x_2d = x.reshape(-1, self.in_features)
-    amax = x_2d.abs().amax(dim=1, keepdim=True).float()  # (M, 1) fp32 for scale math
-    scale_a = (amax / _FP8_MAX).clamp_min(1e-12)
-    x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
-    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=x.dtype)
+    M = x_2d.shape[0]
+    x_fp8 = torch.empty(M, self.in_features, device=x.device, dtype=torch.float8_e4m3fn)
+    scale_a = torch.empty(M, device=x.device, dtype=torch.float32)
+    _sgl_quant_fp8(x_2d.contiguous(), x_fp8, scale_a)
+    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a.unsqueeze(1), scale_b=self.weight_scale, out_dtype=x.dtype)
     if self.bias is not None:
       out = out + self.bias.to(out.dtype)
     return out.reshape(*orig_shape[:-1], self.out_features)
