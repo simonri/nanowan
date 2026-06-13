@@ -223,70 +223,15 @@ def fuse_scale_shift_kernel(
   scale: torch.Tensor,
   shift: torch.Tensor,
   scale_constant: float = 1.0,
-  block_l: int = 128,
-  block_c: int = 128,
+  **kwargs,
 ) -> torch.Tensor:
-  assert x.is_cuda and scale.is_cuda
-  assert x.is_contiguous()
-  B, L, C = x.shape
-  output = torch.empty_like(x)
-
-  if scale.dim() == 0 or (scale.dim() == 1 and scale.numel() == 1):
-    scale_blc = scale.reshape(1)
-  elif scale.dim() == 2:
-    scale_blc = scale[:, None, :]
-  else:
-    scale_blc = scale
-
-  if shift.dim() == 0 or (shift.dim() == 1 and shift.numel() == 1):
-    shift_blc = shift.reshape(1)
-  elif shift.dim() == 2:
-    shift_blc = shift[:, None, :]
-  else:
-    shift_blc = shift
-
-  need_scale_scalar = scale_blc.dim() == 1 and scale_blc.numel() == 1
-  need_shift_scalar = shift_blc.dim() == 1 and shift_blc.numel() == 1
-
-  if not need_scale_scalar:
-    scale_exp = scale_blc.expand(B, L, C)
-    s_sb, s_sl, s_sc = scale_exp.stride()
-  else:
-    s_sb = s_sl = s_sc = 0
-
-  if not need_shift_scalar:
-    shift_exp = shift_blc.expand(B, L, C)
-    sh_sb, sh_sl, sh_sc = shift_exp.stride()
-  else:
-    sh_sb = sh_sl = sh_sc = 0
-
-  grid = (triton.cdiv(L, block_l), triton.cdiv(C, block_c), B)
-  _fuse_scale_shift_kernel_blc[grid](
-    x,
-    shift_blc if need_shift_scalar else shift_exp,
-    scale_blc if need_scale_scalar else scale_exp,
-    scale_constant,
-    output,
-    B,
-    L,
-    C,
-    x.stride(0),
-    x.stride(1),
-    x.stride(2),
-    sh_sb,
-    sh_sl,
-    sh_sc,
-    s_sb,
-    s_sl,
-    s_sc,
-    SCALE_IS_SCALAR=need_scale_scalar,
-    SHIFT_IS_SCALAR=need_shift_scalar,
-    BLOCK_L=block_l,
-    BLOCK_C=block_c,
-    num_warps=4,
-    num_stages=2,
-  )
-  return output
+  # Pure PyTorch: lets torch.compile fuse this with adjacent LayerNorm and cast ops
+  # instead of launching an opaque custom Triton kernel that blocks fusion.
+  if scale.dim() == 2:
+    scale = scale.unsqueeze(1)
+  if shift.dim() == 2:
+    shift = shift.unsqueeze(1)
+  return x * (scale_constant + scale) + shift
 
 
 # --------------------------------------------------------------------------- #
