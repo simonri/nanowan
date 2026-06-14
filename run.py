@@ -248,6 +248,7 @@ def main():
     _ = low_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
   torch.cuda.synchronize()
   del _dummy, _ts, _enc
+  torch.cuda.empty_cache()  # release warmup-pass cached buffers to reduce memory pressure during denoising
 
   # 4. Denoise
   print(f"Denoising ({NUM_STEPS} steps: {NUM_STEPS // 2} high-noise + {NUM_STEPS // 2} low-noise)...")
