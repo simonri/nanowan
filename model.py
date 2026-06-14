@@ -83,6 +83,13 @@ class RowWiseFP8Linear(nn.Module):
       out = out + self.bias.to(out.dtype)
     return out.reshape(*orig_shape[:-1], self.out_features)
 
+  def forward_prequantized(self, x_fp8: torch.Tensor, scale_a: torch.Tensor, orig: torch.Tensor) -> torch.Tensor:
+    """Use pre-quantized x_fp8/scale_a (skip per-token amax+quantize for sharing across Q,K,V)."""
+    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=orig.dtype)
+    if self.bias is not None:
+      out = out + self.bias.to(out.dtype)
+    return out.reshape(*orig.shape[:-1], self.out_features)
+
 
 def replace_ffn_linears_with_fp8(model: "WanModel") -> None:
   for block in model.blocks:
@@ -219,9 +226,20 @@ class WanTransformerBlock(nn.Module):
     shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = e.chunk(6, dim=1)
 
     norm_hidden_states = self.norm1(hidden_states, shift_msa, scale_msa)
-    query = self.norm_q(self.to_q(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
-    key = self.norm_k(self.to_k(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
-    value = self.to_v(norm_hidden_states).unflatten(2, (self.num_heads, self.head_dim))
+    if isinstance(self.to_q, RowWiseFP8Linear):
+      x_2d = norm_hidden_states.reshape(-1, self.to_q.in_features)
+      scale_a = (x_2d.abs().amax(dim=1, keepdim=True).float() / _FP8_MAX).clamp_min(1e-12)
+      x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+      q_proj = self.to_q.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+      k_proj = self.to_k.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+      v_proj = self.to_v.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+    else:
+      q_proj = self.to_q(norm_hidden_states)
+      k_proj = self.to_k(norm_hidden_states)
+      v_proj = self.to_v(norm_hidden_states)
+    query = self.norm_q(q_proj).unflatten(2, (self.num_heads, self.head_dim))
+    key = self.norm_k(k_proj).unflatten(2, (self.num_heads, self.head_dim))
+    value = v_proj.unflatten(2, (self.num_heads, self.head_dim))
 
     cos, sin = freqs_cis
     cos_sin_cache = torch.cat([cos.contiguous(), sin.contiguous()], dim=-1)
