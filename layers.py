@@ -723,9 +723,8 @@ class _ScaleResidualNormScaleShift(CustomOp):
       residual_output = residual + x
     elif isinstance(gate, torch.Tensor):
       residual_output = residual + x * gate
-    modulated = fused_layernorm_scale_shift(
-      residual_output, self.norm.weight, self.norm.bias, scale, shift, self.eps
-    )
+    normalized = self.norm(residual_output)
+    modulated = fuse_scale_shift_kernel(normalized, scale, shift)
     return modulated, residual_output
 
 
@@ -751,9 +750,8 @@ class _NormScaleShift(CustomOp):
     return self.forward_native(x, shift, scale)
 
   def forward_native(self, x, shift, scale):
-    return fused_layernorm_scale_shift(
-      x, self.norm.weight, self.norm.bias, scale, shift, self.eps
-    )
+    normalized = self.norm(x)
+    return fuse_scale_shift_kernel(normalized, scale, shift).to(x.dtype)
 
 
 class LayerNormScaleShift(_NormScaleShift):

@@ -66,3 +66,4 @@ b4e9e53	29.43	54.0	0.145009	keep	Reverted all 3 KV cache attempts (same as 961da
 4d87d29	29.47	54.0	0.213239	discard_rmse	Replace MulAdd Triton with native PyTorch: inductor fuses through dtype boundary, RMSE 0.213 (Triton kernel was acting as float32 barrier)
 a4783a6	29.03	54.0	0.145009	keep	Reverted MulAdd native-PyTorch (same as 1135b84)
 2efd528	29.47	54.0	0.208811	discard_rmse	Fused LN+scale/shift kernel: skipped f16 truncation between LN and scale/shift — scale/shift received full f32 precision, not rounded f16, changing numerics
+9ee471e	29.27	54.0	0.160374	discard_rmse	Fused LN v2 with f16 truncation: replaced F.layer_norm with custom Triton kernel changes inductor compiled graph, RMSE 0.160 still above limit

@@ -19,7 +19,6 @@ from layers import (
   TimestepEmbedder,
   WanAttention,
   apply_flashinfer_rope_qk_inplace,
-  fused_layernorm_scale_shift,
 )
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
@@ -229,9 +228,9 @@ class WanTransformerBlock(nn.Module):
     query, key = apply_flashinfer_rope_qk_inplace(query, key, cos_sin_cache, is_neox=False)
 
     attn_output = self.to_out(self.attn1(query, key, value).flatten(2))
+    # skip fuse_scale_shift_kernel(shift=0, scale=0) which is a no-op identity
     hidden_states = hidden_states + attn_output * gate_msa
-    _n = self.self_attn_residual_norm.norm
-    norm_hidden_states = fused_layernorm_scale_shift(hidden_states, _n.weight, _n.bias, None, None, _n.eps)
+    norm_hidden_states = self.self_attn_residual_norm.norm(hidden_states).to(orig_dtype)
     hidden_states = hidden_states.to(orig_dtype)
 
     attn_output = self.attn2(norm_hidden_states, encoder_hidden_states)
