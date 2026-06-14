@@ -125,16 +125,6 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
     block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
 
 
-def replace_last_n_self_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
-  """Replace ONLY self-attention linears (not cross-attn) in the last n blocks with rowwise FP8."""
-  for block in model.blocks[-n:]:
-    block.to_q = RowWiseFP8Linear(block.to_q.weight, block.to_q.bias)
-    block.to_k = RowWiseFP8Linear(block.to_k.weight, block.to_k.bias)
-    block.to_v = RowWiseFP8Linear(block.to_v.weight, block.to_v.bias)
-    block.to_out = RowWiseFP8Linear(block.to_out.weight, block.to_out.bias)
-    # attn2 (cross-attention) intentionally left unchanged
-
-
 # Checkpoint key → model key remapping
 PARAM_NAMES_MAPPING = {
   r"^patch_embedding\.(.*)$": r"patch_embedding.proj.\1",
