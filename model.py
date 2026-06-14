@@ -198,12 +198,9 @@ class WanCrossAttention(nn.Module):
 
   def forward(self, x, context):
     q = self.norm_q(self.to_q(x)).unflatten(2, (self.num_heads, self.head_dim))
-    if self.cached_k is None:
-      k = self.norm_k(self.to_k(context)).unflatten(2, (self.num_heads, self.head_dim))
-      v = self.to_v(context).unflatten(2, (self.num_heads, self.head_dim))
-    else:
-      k = self.cached_k
-      v = self.cached_v
+    # cached_k/cached_v are always set by precompute_cross_attn_kv before torch.compile
+    k = self.cached_k
+    v = self.cached_v
     return self.to_out(self.attn(q, k, v).flatten(2))
 
 
