@@ -339,7 +339,14 @@ def _fused_ln_ss_kernel(
     b = tl.load(bias_ptr + c, mask=mask, other=0.0).to(tl.float32)
     x_hat = x_hat + b
 
+  # Truncate to float16 before scale/shift: matches FP32LayerNorm → .to(dtype) step.
+  # Without this, scale/shift receives full float32 precision (different from old code
+  # which rounded LN output to float16 before passing to fuse_scale_shift_kernel).
+  if HAS_SCALE or HAS_SHIFT:
+    x_hat = x_hat.to(tl.float16)
+
   # Apply external modulation: y = x_hat * (1 + scale) + shift
+  # (f16 × f32 promotes to f32, same as old fuse_scale_shift_kernel behavior)
   if HAS_SCALE:
     sc = tl.load(scale_ptr + c, mask=mask, other=0.0).to(tl.float32)
     x_hat = x_hat * (1.0 + sc)

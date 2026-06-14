@@ -62,3 +62,7 @@ c258fec	29.48	54.0	0.222806	discard_rmse	Cross-attn KV cache via register_buffer
 58d83b2	29.48	54.0	0.222806	discard_rmse	KV cache: remove conditional branch (attempt 2/3): same bit-identical RMSE 0.222806 — not a storage issue
 f25c1c4	29.48	54.0	0.222806	discard_rmse	KV cache: fresh _CachedCrossAttn module with always-tensor buffers (attempt 3/3): same RMSE — inductor codegen changes when cross-attn ops removed from graph regardless of storage mechanism
 b4e9e53	29.43	54.0	0.145009	keep	Reverted all 3 KV cache attempts (same as 961da81)
+1135b84	29.03	54.0	0.145009	keep	Skip no-op fuse_scale_shift_kernel in self_attn_residual_norm (null shift/scale=0 is identity): eliminates 320 Triton kernel launches, saves 0.40s
+4d87d29	29.47	54.0	0.213239	discard_rmse	Replace MulAdd Triton with native PyTorch: inductor fuses through dtype boundary, RMSE 0.213 (Triton kernel was acting as float32 barrier)
+a4783a6	29.03	54.0	0.145009	keep	Reverted MulAdd native-PyTorch (same as 1135b84)
+2efd528	29.47	54.0	0.208811	discard_rmse	Fused LN+scale/shift kernel: skipped f16 truncation between LN and scale/shift — scale/shift received full f32 precision, not rounded f16, changing numerics
