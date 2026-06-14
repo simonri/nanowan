@@ -67,3 +67,8 @@ b4e9e53	29.43	54.0	0.145009	keep	Reverted all 3 KV cache attempts (same as 961da
 a4783a6	29.03	54.0	0.145009	keep	Reverted MulAdd native-PyTorch (same as 1135b84)
 2efd528	29.47	54.0	0.208811	discard_rmse	Fused LN+scale/shift kernel: skipped f16 truncation between LN and scale/shift — scale/shift received full f32 precision, not rounded f16, changing numerics
 9ee471e	29.27	54.0	0.160374	discard_rmse	Fused LN v2 with f16 truncation: replaced F.layer_norm with custom Triton kernel changes inductor compiled graph, RMSE 0.160 still above limit
+2c4552d	29.04	54.0	0.145009	keep	Reverted all fused LN attempts: only unused kernel code remains (same as 1135b84)
+222f80e	29.01	54.0	0.145009	keep	Warmup order high→low→low→high: primes allocator for step-0, step-0 overhead eliminated (was 0.028s, now ~0s), marginal 0.02s gain
+83d23d2	29.06	54.0	0.154720	discard_rmse	Block 24 self-attn-only rowwise FP8 (not cross-attn): +0.010 RMSE — self-attn at block 24 is also sensitive, 2× RMSE budget
+054f8bb	-	-	crash	crash	inductor combo_kernels=True: InductorError NullKernelHandler in codegen_combo_kernel — bug in PyTorch 2.11
+ec6a48c	29.23	54.0	0.151041	discard_rmse	inductor use_block_ptr=True: +0.006 RMSE (block pointers change Triton reduction order, fp16 non-associative) AND slower
