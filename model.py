@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8", "replace_self_attn_with_fp8_fa3"]
+__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -123,12 +123,6 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
     block.attn2.to_k = RowWiseFP8Linear(block.attn2.to_k.weight, block.attn2.to_k.bias)
     block.attn2.to_v = RowWiseFP8Linear(block.attn2.to_v.weight, block.attn2.to_v.bias)
     block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
-
-
-def replace_self_attn_with_fp8_fa3(model: "WanModel") -> None:
-  """Quantize Q/K/V to FP8 before FA3 in all self-attention blocks (saves ~14ms per call)."""
-  for block in model.blocks:
-    block.attn1.fp8_attn = True
 
 
 # Checkpoint key → model key remapping

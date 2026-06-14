@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from lora import apply_loras
-from model import WanModel, replace_attn_linears_with_fp8, replace_ffn_linears_with_fp8, replace_last_n_attn_with_rowwise_fp8, replace_last_n_ffn_with_fp8, replace_self_attn_with_fp8_fa3
+from model import WanModel, replace_attn_linears_with_fp8, replace_ffn_linears_with_fp8, replace_last_n_attn_with_rowwise_fp8, replace_last_n_ffn_with_fp8
 from prepare import (
   DIT_DTYPE,
   FLOW_SHIFT,
@@ -227,8 +227,6 @@ def main():
   replace_last_n_attn_with_rowwise_fp8(high_model, n=15)  # last 15/40 blocks attn rowwise FP8
   replace_ffn_linears_with_fp8(low_model)        # FP8 for low-noise steps only; high-noise stays fp16
   replace_attn_linears_with_fp8(low_model)       # attn projections are RMSNorm outputs (Gaussian → good FP8)
-  replace_self_attn_with_fp8_fa3(high_model)     # FP8 QKV inside FA3 self-attn: saves ~14ms/call × 40 blocks
-  replace_self_attn_with_fp8_fa3(low_model)      # same for low-noise model
 
   load_seconds = time.perf_counter() - t_total
 

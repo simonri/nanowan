@@ -988,33 +988,15 @@ def apply_flashinfer_rope_qk_inplace(q, k, cos_sin_cache, *, head_size=None, is_
 # --------------------------------------------------------------------------- #
 
 
-_FP8_ATTN_MAX = 448.0
-
-
 class WanAttention(nn.Module):
-  def __init__(self, num_heads, head_size, softmax_scale=None, causal=False, fp8_attn=False):
+  def __init__(self, num_heads, head_size, softmax_scale=None, causal=False):
     super().__init__()
     self.num_heads = num_heads
     self.head_size = head_size
     self.softmax_scale = softmax_scale
     self.causal = causal
-    self.fp8_attn = fp8_attn
 
   def forward(self, q, k, v):
-    if _FA3_AVAILABLE and self.fp8_attn:
-      B, N, H, D = q.shape
-      s_q = (q.abs().max() / _FP8_ATTN_MAX).to(torch.float32)
-      s_k = (k.abs().max() / _FP8_ATTN_MAX).to(torch.float32)
-      s_v = (v.abs().max() / _FP8_ATTN_MAX).to(torch.float32)
-      dq = s_q.reshape(1, 1).expand(B, H).contiguous()
-      dk = s_k.reshape(1, 1).expand(B, H).contiguous()
-      dv = s_v.reshape(1, 1).expand(B, H).contiguous()
-      q_fp8 = (q / s_q).to(torch.float8_e4m3fn)
-      k_fp8 = (k / s_k).to(torch.float8_e4m3fn)
-      v_fp8 = (v / s_v).to(torch.float8_e4m3fn)
-      out = _flash_attn_fa3_func(q_fp8, k_fp8, v_fp8, softmax_scale=self.softmax_scale, causal=self.causal,
-                                  q_descale=dq, k_descale=dk, v_descale=dv)
-      return out.to(q.dtype)
     # FA3 is better-tuned for H100 than FA4; use for large KV (self-attn) and small KV (cross-attn)
     if _FA3_AVAILABLE:
       out = _flash_attn_fa3_func(q, k, v, softmax_scale=self.softmax_scale, causal=self.causal)
