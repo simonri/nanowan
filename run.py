@@ -9,7 +9,6 @@ import time
 
 import PIL.Image
 import torch
-from torch.profiler import ProfilerActivity
 from transformers import AutoTokenizer
 
 from lora import apply_loras
@@ -233,6 +232,7 @@ def main():
 
   # Compile and warm up both models before the denoising timer starts
   print("Compiling models (warmup before timer)...")
+  torch._inductor.config.coordinate_descent_tuning = True
   high_model = torch.compile(high_model, mode="default", dynamic=False)
   low_model = torch.compile(low_model, mode="default", dynamic=False)
   lat_h_w = HEIGHT // 8
@@ -253,14 +253,10 @@ def main():
   # 4. Denoise
   print(f"Denoising ({NUM_STEPS} steps: {NUM_STEPS // 2} high-noise + {NUM_STEPS // 2} low-noise)...")
   t_denoise = time.perf_counter()
-  with torch.profiler.profile(activities=[ProfilerActivity.CUDA], record_shapes=False) as prof:
-    latents = denoise(prompt_embeds, image_latent, high_model, low_model)
-    torch.cuda.synchronize()
+  latents = denoise(prompt_embeds, image_latent, high_model, low_model)
+  torch.cuda.synchronize()
   denoising_seconds = time.perf_counter() - t_denoise
   print(f"  Denoising: {denoising_seconds:.2f}s")
-  print("\n=== CUDA KERNEL PROFILE (top 40 by self_cuda_time_total) ===")
-  print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=40))
-  print("=== END PROFILE ===")
 
   # 5. Decode with VAE
   print("Decoding...")

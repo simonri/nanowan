@@ -72,3 +72,4 @@ a4783a6	29.03	54.0	0.145009	keep	Reverted MulAdd native-PyTorch (same as 1135b84
 83d23d2	29.06	54.0	0.154720	discard_rmse	Block 24 self-attn-only rowwise FP8 (not cross-attn): +0.010 RMSE — self-attn at block 24 is also sensitive, 2× RMSE budget
 054f8bb	-	-	crash	crash	inductor combo_kernels=True: InductorError NullKernelHandler in codegen_combo_kernel — bug in PyTorch 2.11
 ec6a48c	29.23	54.0	0.151041	discard_rmse	inductor use_block_ptr=True: +0.006 RMSE (block pointers change Triton reduction order, fp16 non-associative) AND slower
+3adfce0	29.19	54.0	0.145009	discard	torch.profiler diagnostic: FA3 attention=57.84% (16.77s/29s, ~85% H100 peak), cuBLAS GEMMs=30%, Triton non-GEMM=12%
