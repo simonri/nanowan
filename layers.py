@@ -940,47 +940,31 @@ def apply_flashinfer_rope_qk_inplace(q, k, cos_sin_cache, *, head_size=None, is_
   if head_size is None:
     head_size = d
 
-  if flashinfer_apply_rope_inplace is None:
-    half_size = cos_sin_cache.shape[-1] // 2
-    if positions is None:
-      cos = cos_sin_cache[:seqlen, :half_size].to(q.dtype)
-      sin = cos_sin_cache[:seqlen, half_size:].to(q.dtype)
-      cos = cos.unsqueeze(0).expand(bsz, -1, -1).reshape(bsz * seqlen, -1)
-      sin = sin.unsqueeze(0).expand(bsz, -1, -1).reshape(bsz * seqlen, -1)
-    else:
-      positions = positions.to(cos_sin_cache.device).view(-1)
-      cos = cos_sin_cache[positions, :half_size].to(q.dtype)
-      sin = cos_sin_cache[positions, half_size:].to(q.dtype)
-    q_flat = q.reshape(bsz * seqlen, nheads, d)
-    k_flat = k.reshape(bsz * seqlen, nheads, d)
-
-    def _apply_rotary(x, cos, sin, interleaved):
-      x1, x2 = x[..., ::2], x[..., 1::2]
-      c, s = cos[:, None, :], sin[:, None, :]
-      if interleaved:
-        return torch.stack([x1 * c - x2 * s, x1 * s + x2 * c], dim=-1).flatten(-2)
-      half = x.shape[-1] // 2
-      return torch.cat([x[..., :half] * c - x[..., half:] * s, x[..., :half] * s + x[..., half:] * c], dim=-1)
-
-    q_rot = _apply_rotary(q_flat, cos, sin, interleaved=not is_neox)
-    k_rot = _apply_rotary(k_flat, cos, sin, interleaved=not is_neox)
-    return q_rot.view(bsz, seqlen, nheads, d), k_rot.view(bsz, seqlen, nheads, d)
-
+  # Pure PyTorch fallback: eliminates FlashInfer graph break so torch.compile can fuse RoPE
+  half_size = cos_sin_cache.shape[-1] // 2
   if positions is None:
-    pos_1d = torch.arange(seqlen, device=q.device, dtype=torch.long)
-    positions = pos_1d if bsz == 1 else pos_1d.repeat(bsz)
+    cos = cos_sin_cache[:seqlen, :half_size].to(q.dtype)
+    sin = cos_sin_cache[:seqlen, half_size:].to(q.dtype)
+    cos = cos.unsqueeze(0).expand(bsz, -1, -1).reshape(bsz * seqlen, -1)
+    sin = sin.unsqueeze(0).expand(bsz, -1, -1).reshape(bsz * seqlen, -1)
+  else:
+    positions = positions.to(cos_sin_cache.device).view(-1)
+    cos = cos_sin_cache[positions, :half_size].to(q.dtype)
+    sin = cos_sin_cache[positions, half_size:].to(q.dtype)
+  q_flat = q.reshape(bsz * seqlen, nheads, d)
+  k_flat = k.reshape(bsz * seqlen, nheads, d)
 
-  q_flat = q.reshape(bsz * seqlen, nheads * d).contiguous()
-  k_flat = k.reshape(bsz * seqlen, nheads * d).contiguous()
-  flashinfer_apply_rope_inplace(
-    positions=positions,
-    query=q_flat,
-    key=k_flat,
-    head_size=d,
-    cos_sin_cache=cos_sin_cache,
-    is_neox=is_neox,
-  )
-  return q_flat.view(bsz, seqlen, nheads, d), k_flat.view(bsz, seqlen, nheads, d)
+  def _apply_rotary(x, cos, sin, interleaved):
+    x1, x2 = x[..., ::2], x[..., 1::2]
+    c, s = cos[:, None, :], sin[:, None, :]
+    if interleaved:
+      return torch.stack([x1 * c - x2 * s, x1 * s + x2 * c], dim=-1).flatten(-2)
+    half = x.shape[-1] // 2
+    return torch.cat([x[..., :half] * c - x[..., half:] * s, x[..., :half] * s + x[..., half:] * c], dim=-1)
+
+  q_rot = _apply_rotary(q_flat, cos, sin, interleaved=not is_neox)
+  k_rot = _apply_rotary(k_flat, cos, sin, interleaved=not is_neox)
+  return q_rot.view(bsz, seqlen, nheads, d), k_rot.view(bsz, seqlen, nheads, d)
 
 
 # --------------------------------------------------------------------------- #
