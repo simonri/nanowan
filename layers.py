@@ -290,6 +290,107 @@ def fuse_scale_shift_kernel(
 
 
 # --------------------------------------------------------------------------- #
+# Fused LayerNorm + scale/shift Triton kernel (one HBM round-trip)
+# --------------------------------------------------------------------------- #
+
+
+@triton.jit
+def _fused_ln_ss_kernel(
+  x_ptr,
+  weight_ptr,
+  bias_ptr,
+  scale_ptr,
+  shift_ptr,
+  y_ptr,
+  C: tl.constexpr,
+  eps,
+  HAS_WEIGHT: tl.constexpr,
+  HAS_BIAS: tl.constexpr,
+  HAS_SCALE: tl.constexpr,
+  HAS_SHIFT: tl.constexpr,
+  BLOCK_C: tl.constexpr,
+):
+  """One-pass fused FP32 LayerNorm + scale/shift → float16 output.
+
+  Each program handles one (batch, seq) row. Input may be float16 or float32.
+  """
+  row = tl.program_id(0)
+  c = tl.arange(0, BLOCK_C)
+  mask = c < C
+
+  # Load x in fp32 (works for both float16 and float32 input pointers)
+  x_f32 = tl.load(x_ptr + row * C + c, mask=mask, other=0.0).to(tl.float32)
+
+  # Compute mean (masked positions contribute 0.0)
+  mean = tl.sum(x_f32, axis=0) / C
+
+  # Compute variance (exclude masked positions)
+  x_mc = tl.where(mask, x_f32 - mean, 0.0)
+  var = tl.sum(x_mc * x_mc, axis=0) / C
+
+  # Normalize
+  x_hat = x_mc * (1.0 / tl.sqrt(var + eps))
+
+  # Apply LN affine
+  if HAS_WEIGHT:
+    w = tl.load(weight_ptr + c, mask=mask, other=1.0).to(tl.float32)
+    x_hat = x_hat * w
+  if HAS_BIAS:
+    b = tl.load(bias_ptr + c, mask=mask, other=0.0).to(tl.float32)
+    x_hat = x_hat + b
+
+  # Apply external modulation: y = x_hat * (1 + scale) + shift
+  if HAS_SCALE:
+    sc = tl.load(scale_ptr + c, mask=mask, other=0.0).to(tl.float32)
+    x_hat = x_hat * (1.0 + sc)
+  if HAS_SHIFT:
+    sh = tl.load(shift_ptr + c, mask=mask, other=0.0).to(tl.float32)
+    x_hat = x_hat + sh
+
+  tl.store(y_ptr + row * C + c, x_hat.to(tl.float16), mask=mask)
+
+
+def fused_layernorm_scale_shift(
+  x: torch.Tensor,
+  weight: "torch.Tensor | None",
+  bias: "torch.Tensor | None",
+  scale: "torch.Tensor | None",
+  shift: "torch.Tensor | None",
+  eps: float,
+) -> torch.Tensor:
+  """FP32 LayerNorm + optional affine + optional scale/shift, outputs float16.
+
+  Fuses what would otherwise be FP32LayerNorm + fuse_scale_shift_kernel into
+  one HBM pass: reads x once (float16 or float32), writes float16 output.
+  """
+  B, L, C = x.shape
+  x_2d = x.reshape(B * L, C).contiguous()
+  y = torch.empty((B * L, C), dtype=torch.float16, device=x.device)
+
+  scale_1d = scale.reshape(C).contiguous() if scale is not None else None
+  shift_1d = shift.reshape(C).contiguous() if shift is not None else None
+
+  block_c = triton.next_power_of_2(C)
+  _fused_ln_ss_kernel[(B * L,)](
+    x_2d,
+    weight,
+    bias,
+    scale_1d,
+    shift_1d,
+    y,
+    C=C,
+    eps=eps,
+    HAS_WEIGHT=weight is not None,
+    HAS_BIAS=bias is not None,
+    HAS_SCALE=scale is not None,
+    HAS_SHIFT=shift is not None,
+    BLOCK_C=block_c,
+    num_warps=16,
+  )
+  return y.reshape(B, L, C)
+
+
+# --------------------------------------------------------------------------- #
 # Triton RMS-norm one-pass kernel (from wan/kernels/rmsnorm_onepass.py)
 # --------------------------------------------------------------------------- #
 
@@ -615,8 +716,9 @@ class _ScaleResidualNormScaleShift(CustomOp):
       residual_output = residual + x
     elif isinstance(gate, torch.Tensor):
       residual_output = residual + x * gate
-    normalized = self.norm(residual_output)
-    modulated = fuse_scale_shift_kernel(normalized, scale, shift)
+    modulated = fused_layernorm_scale_shift(
+      residual_output, self.norm.weight, self.norm.bias, scale, shift, self.eps
+    )
     return modulated, residual_output
 
 
@@ -642,8 +744,9 @@ class _NormScaleShift(CustomOp):
     return self.forward_native(x, shift, scale)
 
   def forward_native(self, x, shift, scale):
-    normalized = self.norm(x)
-    return fuse_scale_shift_kernel(normalized, scale, shift).to(x.dtype)
+    return fused_layernorm_scale_shift(
+      x, self.norm.weight, self.norm.bias, scale, shift, self.eps
+    )
 
 
 class LayerNormScaleShift(_NormScaleShift):
