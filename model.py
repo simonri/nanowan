@@ -127,14 +127,13 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
 
 @torch.no_grad()
 def precompute_cross_attn_kv(model: "WanModel", encoder_hidden_states: torch.Tensor) -> None:
-  """Cache cross-attn K/V for constant text — called once before torch.compile."""
+  """Replace each block's attn2 with _CachedCrossAttn — computed once, no None buffers."""
   context = model.condition_embedder.text_embedder(encoder_hidden_states)
   for block in model.blocks:
     attn2 = block.attn2
     k = attn2.norm_k(attn2.to_k(context)).unflatten(2, (attn2.num_heads, attn2.head_dim))
     v = attn2.to_v(context).unflatten(2, (attn2.num_heads, attn2.head_dim))
-    attn2.cached_k = k
-    attn2.cached_v = v
+    block.attn2 = _CachedCrossAttn(attn2, k, v)
 
 
 # Checkpoint key → model key remapping
@@ -193,15 +192,31 @@ class WanCrossAttention(nn.Module):
     self.norm_q = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.norm_k = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.attn = WanAttention(num_heads=num_heads, head_size=self.head_dim, causal=False)
-    self.register_buffer('cached_k', None, persistent=False)
-    self.register_buffer('cached_v', None, persistent=False)
 
   def forward(self, x, context):
     q = self.norm_q(self.to_q(x)).unflatten(2, (self.num_heads, self.head_dim))
-    # cached_k/cached_v are always set by precompute_cross_attn_kv before torch.compile
-    k = self.cached_k
-    v = self.cached_v
+    k = self.norm_k(self.to_k(context)).unflatten(2, (self.num_heads, self.head_dim))
+    v = self.to_v(context).unflatten(2, (self.num_heads, self.head_dim))
     return self.to_out(self.attn(q, k, v).flatten(2))
+
+
+class _CachedCrossAttn(nn.Module):
+  """Cross-attention with precomputed K/V tensors as always-tensor buffers."""
+
+  def __init__(self, orig: "WanCrossAttention", k: torch.Tensor, v: torch.Tensor):
+    super().__init__()
+    self.to_q = orig.to_q
+    self.norm_q = orig.norm_q
+    self.to_out = orig.to_out
+    self.attn = orig.attn
+    self.num_heads = orig.num_heads
+    self.head_dim = orig.head_dim
+    self.register_buffer('k', k)
+    self.register_buffer('v', v)
+
+  def forward(self, x, context):
+    q = self.norm_q(self.to_q(x)).unflatten(2, (self.num_heads, self.head_dim))
+    return self.to_out(self.attn(q, self.k, self.v).flatten(2))
 
 
 class WanTransformerBlock(nn.Module):
