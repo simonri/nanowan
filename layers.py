@@ -685,6 +685,10 @@ class RMSNorm(CustomOp):
 
 class FP32LayerNorm(nn.LayerNorm):
   def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    if not self.elementwise_affine:
+      # No affine params: cuDNN handles fp32 accumulation internally, outputs same dtype as input.
+      # Avoids creating an explicit float32 intermediate tensor in HBM (~670MB per call saved).
+      return F.layer_norm(inputs, self.normalized_shape, None, None, self.eps)
     origin_dtype = inputs.dtype
     return F.layer_norm(
       inputs.float(),
