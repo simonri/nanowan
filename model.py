@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8"]
+__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8", "replace_first_n_self_attn_with_fused_qkv"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -125,6 +125,39 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
     block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
 
 
+class FusedQKVLinear(nn.Module):
+  """Fuse self-attention to_q, to_k, to_v into one 3× wider GEMM for efficiency.
+
+  A single [M, K]×[K, 3N] GEMM achieves better GPU utilization than three
+  [M, K]×[K, N] GEMMs when the GPU has spare capacity at smaller tile widths.
+  """
+
+  def __init__(self, to_q: nn.Linear, to_k: nn.Linear, to_v: nn.Linear):
+    super().__init__()
+    self.out_features = to_q.out_features
+    w = torch.cat([to_q.weight.data, to_k.weight.data, to_v.weight.data], dim=0)
+    self.weight = nn.Parameter(w)
+    if to_q.bias is not None:
+      b = torch.cat([to_q.bias.data, to_k.bias.data, to_v.bias.data])
+      self.bias = nn.Parameter(b)
+    else:
+      self.bias = None
+
+  def forward(self, x: torch.Tensor):
+    out = torch.nn.functional.linear(x, self.weight, self.bias)
+    return out.split(self.out_features, dim=-1)
+
+
+def replace_first_n_self_attn_with_fused_qkv(model: "WanModel", n: int) -> None:
+  """Fuse to_q, to_k, to_v in the first n BF16 blocks into one wider GEMM.
+
+  Only valid for blocks where to_q/to_k/to_v are still standard nn.Linear (BF16).
+  Must be called after replace_last_n_attn_with_rowwise_fp8 so FP8 blocks are skipped.
+  """
+  for block in model.blocks[:n]:
+    block.to_qkv = FusedQKVLinear(block.to_q, block.to_k, block.to_v)
+
+
 # Checkpoint key → model key remapping
 PARAM_NAMES_MAPPING = {
   r"^patch_embedding\.(.*)$": r"patch_embedding.proj.\1",
@@ -198,6 +231,7 @@ class WanTransformerBlock(nn.Module):
     self.to_q = nn.Linear(dim, dim, bias=True)
     self.to_k = nn.Linear(dim, dim, bias=True)
     self.to_v = nn.Linear(dim, dim, bias=True)
+    self.to_qkv = None  # set by replace_first_n_self_attn_with_fused_qkv when applicable
     self.to_out = nn.Linear(dim, dim, bias=True)
     self.attn1 = WanAttention(num_heads=num_heads, head_size=self.head_dim, causal=False)
     self.norm_q = RMSNorm(dim, eps=eps)
@@ -219,9 +253,15 @@ class WanTransformerBlock(nn.Module):
     shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = e.chunk(6, dim=1)
 
     norm_hidden_states = self.norm1(hidden_states, shift_msa, scale_msa)
-    query = self.norm_q(self.to_q(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
-    key = self.norm_k(self.to_k(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
-    value = self.to_v(norm_hidden_states).unflatten(2, (self.num_heads, self.head_dim))
+    if self.to_qkv is not None:
+      q_out, k_out, v_out = self.to_qkv(norm_hidden_states)
+      query = self.norm_q(q_out).unflatten(2, (self.num_heads, self.head_dim))
+      key = self.norm_k(k_out).unflatten(2, (self.num_heads, self.head_dim))
+      value = v_out.unflatten(2, (self.num_heads, self.head_dim))
+    else:
+      query = self.norm_q(self.to_q(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
+      key = self.norm_k(self.to_k(norm_hidden_states)).unflatten(2, (self.num_heads, self.head_dim))
+      value = self.to_v(norm_hidden_states).unflatten(2, (self.num_heads, self.head_dim))
 
     cos, sin = freqs_cis
     cos_sin_cache = torch.cat([cos.contiguous(), sin.contiguous()], dim=-1)
