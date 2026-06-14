@@ -243,9 +243,9 @@ def main():
   with torch.no_grad(), torch.amp.autocast("cuda", dtype=DIT_DTYPE):
     _ = high_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
     _ = low_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
-    # second pass to prime GPU memory allocator to steady-state pattern
-    _ = high_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
+    # second pass: end on high_model to prime allocator for step-0 (high-noise) denoising
     _ = low_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
+    _ = high_model(hidden_states=_dummy, timestep=_ts, encoder_hidden_states=_enc)
   torch.cuda.synchronize()
   del _dummy, _ts, _enc
 
