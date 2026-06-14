@@ -224,7 +224,7 @@ def fuse_scale_shift_kernel(
   shift: torch.Tensor,
   scale_constant: float = 1.0,
   block_l: int = 128,
-  block_c: int = 256,
+  block_c: int = 512,
 ) -> torch.Tensor:
   assert x.is_cuda and scale.is_cuda
   assert x.is_contiguous()
@@ -284,7 +284,7 @@ def fuse_scale_shift_kernel(
     BLOCK_L=block_l,
     BLOCK_C=block_c,
     num_warps=16,
-    num_stages=2,
+    num_stages=4,
   )
   return output
 

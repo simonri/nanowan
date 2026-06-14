@@ -232,7 +232,6 @@ def main():
 
   # Compile and warm up both models before the denoising timer starts
   print("Compiling models (warmup before timer)...")
-  torch._inductor.config.coordinate_descent_tuning = True
   high_model = torch.compile(high_model, mode="default", dynamic=False)
   low_model = torch.compile(low_model, mode="default", dynamic=False)
   lat_h_w = HEIGHT // 8
