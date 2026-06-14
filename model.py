@@ -55,6 +55,13 @@ class FP8Linear(nn.Module):
       out = out + self.bias.to(out.dtype)
     return out.reshape(*orig_shape[:-1], self.out_features)
 
+  def forward_prequantized(self, x_fp8: torch.Tensor, scale_a: torch.Tensor, orig: torch.Tensor) -> torch.Tensor:
+    """Use pre-quantized x_fp8/scale_a (skip global amax+quantize for sharing across Q,K,V)."""
+    out = torch._scaled_mm(x_fp8, self.weight.T, scale_a=scale_a, scale_b=self.weight_scale, out_dtype=orig.dtype)
+    if self.bias is not None:
+      out = out + self.bias.to(out.dtype)
+    return out.reshape(*orig.shape[:-1], self.out_features)
+
 
 class RowWiseFP8Linear(nn.Module):
   """FP8 linear with per-token (row-wise) activation scale — more accurate for noisy activations."""
@@ -229,6 +236,14 @@ class WanTransformerBlock(nn.Module):
     if isinstance(self.to_q, RowWiseFP8Linear):
       x_2d = norm_hidden_states.reshape(-1, self.to_q.in_features)
       scale_a = (x_2d.abs().amax(dim=1, keepdim=True).float() / _FP8_MAX).clamp_min(1e-12)
+      x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+      q_proj = self.to_q.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+      k_proj = self.to_k.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+      v_proj = self.to_v.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
+    elif isinstance(self.to_q, FP8Linear):
+      x_2d = norm_hidden_states.reshape(-1, self.to_q.in_features)
+      amax = x_2d.abs().amax().float()
+      scale_a = (amax / _FP8_MAX).clamp_min(1e-12).reshape(1)
       x_fp8 = (x_2d / scale_a.to(x_2d.dtype)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
       q_proj = self.to_q.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
       k_proj = self.to_k.forward_prequantized(x_fp8, scale_a, norm_hidden_states)
