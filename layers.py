@@ -284,7 +284,7 @@ def fuse_scale_shift_kernel(
     BLOCK_L=block_l,
     BLOCK_C=block_c,
     num_warps=16,
-    num_stages=4,
+    num_stages=2,
   )
   return output
 
