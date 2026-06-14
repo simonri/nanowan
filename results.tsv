@@ -73,4 +73,3 @@ a4783a6	29.03	54.0	0.145009	keep	Reverted MulAdd native-PyTorch (same as 1135b84
 054f8bb	-	-	crash	crash	inductor combo_kernels=True: InductorError NullKernelHandler in codegen_combo_kernel — bug in PyTorch 2.11
 ec6a48c	29.23	54.0	0.151041	discard_rmse	inductor use_block_ptr=True: +0.006 RMSE (block pointers change Triton reduction order, fp16 non-associative) AND slower
 3adfce0	29.19	54.0	0.145009	discard	torch.profiler diagnostic: FA3 attention=57.84% (16.77s/29s, ~85% H100 peak), cuBLAS GEMMs=30%, Triton non-GEMM=12%
-5e71685	28.99	54.0	0.145009	keep	Share RowWiseFP8 quantization across Q,K,V: compute norm_hidden_states rowwise amax+x_fp8 once; saves ~120 quant ops per run (~0.02s)
