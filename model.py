@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8"]
+__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8", "precompute_cross_attn_kv"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -112,6 +112,16 @@ def replace_last_n_ffn_with_fp8(model: "WanModel", n: int) -> None:
     ffn.fc_out = FP8Linear(ffn.fc_out.weight, ffn.fc_out.bias)
 
 
+def precompute_cross_attn_kv(model: "WanModel", prompt_embeds: torch.Tensor) -> None:
+  """Cache cross-attention K and V for all blocks; text embedding is constant across denoising steps."""
+  with torch.no_grad():
+    context = model.condition_embedder.text_embedder(prompt_embeds)
+    for block in model.blocks:
+      attn2 = block.attn2
+      attn2._cached_k = attn2.norm_k(attn2.to_k(context)).unflatten(2, (attn2.num_heads, attn2.head_dim)).detach()
+      attn2._cached_v = attn2.to_v(context).unflatten(2, (attn2.num_heads, attn2.head_dim)).detach()
+
+
 def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
   """Replace attention projection linears in the last n blocks with rowwise FP8."""
   for block in model.blocks[-n:]:
@@ -181,11 +191,17 @@ class WanCrossAttention(nn.Module):
     self.norm_q = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.norm_k = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.attn = WanAttention(num_heads=num_heads, head_size=self.head_dim, causal=False)
+    self._cached_k: torch.Tensor | None = None
+    self._cached_v: torch.Tensor | None = None
 
   def forward(self, x, context):
     q = self.norm_q(self.to_q(x)).unflatten(2, (self.num_heads, self.head_dim))
-    k = self.norm_k(self.to_k(context)).unflatten(2, (self.num_heads, self.head_dim))
-    v = self.to_v(context).unflatten(2, (self.num_heads, self.head_dim))
+    if self._cached_k is not None:
+      k = self._cached_k
+      v = self._cached_v
+    else:
+      k = self.norm_k(self.to_k(context)).unflatten(2, (self.num_heads, self.head_dim))
+      v = self.to_v(context).unflatten(2, (self.num_heads, self.head_dim))
     return self.to_out(self.attn(q, k, v).flatten(2))
 
 
