@@ -1,0 +1,64 @@
+commit	denoising_s	memory_gb	latent_rmse	status	description
+d8d49e4	38.10	60.8	0.000000	keep	baseline
+f60535b	33.83	60.8	~0.000	keep	torch.compile both models (default mode) with warmup
+c1a7b21	38.83	60.8	N/A	discard	torch.compile reduce-overhead (CUDA graphs — slower)
+142ba49	38.72	60.8	N/A	discard	torch.compile max-autotune (slower than default)
+fb4d542	28.84	54.0	0.364971	discard_rmse	FP8 block linears — RMSE 0.365 too high (>0.15)
+68d8cab	24.05	54.0	~0.450	discard_rmse	FA3 fp8 attention — RMSE even higher
+7fb7ccb	23.86	54.0	0.449869	discard_rmse	FA4 fp16 cross-attn — RMSE 0.45 too high
+6f6d2b6	23.29	53.9	0.454751	discard_rmse	use_fast_accum=True — slightly worse RMSE
+4f5d8ce	23.44	54.5	0.461142	discard	QKV fusion — slower AND bad RMSE
+19a24b4	23.23	54.0	0.446846	discard_rmse	FA3 fp16 cross-attn — RMSE 0.45 still too high
+(reset)	-	-	-	meta	Reset branch to f60535b (torch.compile baseline 33.83s ~0 RMSE)
+40ba698	33.09	60.8	0.043530	keep	FA3 fp16 for all attention: 0.74s faster, RMSE 0.044 (within limit)
+(reset)	30.50	50.2	0.206823	discard_rmse	FFN fc_in+fc_out FP8 per-tensor (80 GEMMs): 2.59s faster but RMSE 0.207 > 0.15
+1e0a203	59.75	54.3	0.449139	discard	INT8 W8A8 FFN: torch._int_mm not on tensor cores (44ms vs 5ms for FP8)
+b78776f	32.01	55.5	0.241772	discard_rmse	FP8 fc_out only: post-GELU more variable than Gaussian fc_in, RMSE 0.242 > 0.15
+6fcc371	31.77	55.5	0.204417	discard_rmse	FP8 high-noise FFN only (4 steps): RMSE 0.204 — high-noise dominates error
+0006cd1	31.87	55.5	0.074920	keep	FP8 low-noise FFN only (4 steps): RMSE 0.075, 1.22s faster
+964f6a0	31.05	54.0	0.087443	keep	FP8 low-noise FFN+attn projections: RMSE 0.087, 0.82s further faster
+b685db7	30.63	54.0	0.092510	keep	High-noise last 10/40 FFN blocks FP8: only +0.005 RMSE, 0.42s faster
+7fb728e	30.40	54.0	0.112842	keep	High-noise last 20/40 FFN blocks FP8: RMSE 0.113, 0.23s faster
+898b266	30.07	54.0	0.173312	discard_rmse	High-noise last 30/40 FFN blocks FP8: RMSE 0.173 > 0.15
+6918069	30.25	54.0	0.136248	keep	High-noise last 25/40 FFN blocks FP8: RMSE 0.136, 0.15s faster
+dfd5a59	29.92	54.0	0.165541	discard_rmse	High-noise last 10/40 attn proj FP8 (per-tensor): RMSE 0.166 > 0.15
+4b4419d	-	-	crash	crash	Rowwise FP8 first attempt: scale_b shape error (crash)
+e82e24d	-	-	crash	crash	Rowwise FP8 fix1: scale_a 2D but scale_b must be (1,N) (crash)
+62c7b7a	30.04	54.0	0.133725	keep	Rowwise FP8 high-noise attn last 10 blocks: ~0 RMSE change, 0.21s faster
+2903ef7	29.57	54.0	0.266919	discard_rmse	Rowwise FP8 high-noise attn ALL 40 blocks: RMSE 0.267 > 0.15
+0f2f364	30.07	54.0	0.137254	discard	Rowwise FP8 FFN n=30 high-noise: rowwise overhead cancels extra-5-block savings (slower)
+2087108	29.75	54.0	0.145009	keep	Rowwise FP8 high-noise attn n=15: RMSE 0.145 (just under limit), 0.29s faster
+0cdda0c	29.80	54.0	0.168519	discard_rmse	Rowwise FP8 high-noise attn n=16: block 25 jumps +0.023 RMSE → over limit
+4efbf46	29.67	54.0	0.219073	discard_rmse	Mixed FFN n=30 (25 per-tensor + 5 rowwise) + attn n=15: RMSE 0.219 (FFN+attn compound)
+b324a96	29.71	54.0	0.145009	keep	Skip bf16→fp32 upcast in FP8Linear forward: same RMSE, 0.04s faster
+f6e7338	30.01	54.0	0.145009	discard	Precompute cos_sin_cache once per step: torch.compile was CSE-ing it already (slower)
+4d832b3	29.46	54.0	0.145009	keep	Double warmup pass primes GPU allocator: step-0 overhead 4.19→3.94s, saves 0.25s
+7ff4173	29.51	54.0	0.145009	discard	Triple warmup: no further improvement, run-to-run variance (slower than double)
+4151097	29.50	54.0	0.145009	discard	sgl_per_token_quant_fp8 in RowWiseFP8: torch.compile already fuses manual quant (no gain)
+0dd4bae	29.46	54.0	0.145009	keep	Reverted sgl quant (same as 4d832b3)
+0f29b14	28.72	54.0	0.218657	discard_rmse	Pure PyTorch scale_shift: eliminates 161 Triton kernel calls, but torch.compile fuses through FP32LayerNorm eliminating its BF16 cast → RMSE 0.219 > 0.15
+f4b045c	29.46	54.0	0.145009	keep	Reverted pure PyTorch scale_shift (same as 0dd4bae)
+457fc5d	-	-	crash	crash	max-autotune-no-cudagraphs: InductorError on torch._scaled_mm FP8 GEMMs — inductor can't lower FP8 in max-autotune path
+ea2167d	29.46	54.0	0.145009	keep	Reverted max-autotune (same as f4b045c)
+ab1bdda	29.40	54.0	0.147818	discard	Cross-attn K=512 switch FA3→matmul: only 0.06s gain (within noise) but RMSE +0.003 — bad trade, reverted
+c16b54a	29.46	54.0	0.145009	keep	Reverted cross-attn matmul (same as 0dd4bae)
+72f0301	29.45	54.0	0.145009	discard	empty_cache after warmup: no improvement (within noise)
+515de74	29.46	54.0	0.145009	keep	Reverted empty_cache (same as c16b54a)
+dfae985	25.04	54.0	0.428867	discard_rmse	FA3 FP8 self-attn all 40 blocks × both models: huge speedup but RMSE 0.429 >> 0.15
+f63d1ab	29.46	54.0	0.145009	keep	Reverted FA3 FP8 self-attn (same as c16b54a)
+238302e	29.42	54.0	0.145009	keep	torch.compile dynamic=False: same RMSE, ~0.04s improvement (within noise)
+4b2187d	29.45	54.0	0.150113	discard_rmse	PyTorch RoPE fallback (bypass FlashInfer): FlashInfer uses different numerics, RMSE 0.150 over limit
+98aa6b5	29.46	54.0	0.145009	keep	Reverted PyTorch RoPE (same as 238302e)
+5c05c06	29.23	54.0	0.184760	discard_rmse	Cross-attn Q/O rowwise FP8 high-model blocks 0-24: 50 large BF16 GEMMs → FP8, but RMSE +0.040 (cross-attn Q is surprisingly sensitive)
+9390255	29.46	54.0	0.145009	keep	Reverted cross-attn Q/O FP8 (same as 98aa6b5)
+356b7d2	29.47	54.0	0.145009	discard	Fused self-attn Q,K,V → one 3× wider GEMM (25 BF16 blocks): cuBLAS does not gain from wider N at this shape, zero speedup
+002c166	29.46	54.0	0.145009	keep	Reverted fused QKV (same as 9390255)
+7f9cc7e	29.50	54.0	0.146620	discard	Low-model attn per-tensor→rowwise FP8: rowwise quantization overhead cancels cuBLAS kernel speedup, slightly slower
+bcdf0f4	29.46	54.0	0.145009	keep	Reverted low-model rowwise attn (same as 002c166)
+82beb13	29.37	54.0	0.222806	discard_rmse	Scale-shift BC=256/warps=16 + cross-attn KV cache: KV cache breaks RMSE (Python attr treated as constant by dynamo, wrong values captured)
+a967122	29.46	54.0	0.145009	keep	Reverted KV cache+scale_shift (same as bcdf0f4)
+961da81	29.43	54.0	0.145009	keep	scale_shift BLOCK_C=128→256 num_warps=4→16: ~35ms savings (within noise but RMSE correct)
+c258fec	29.48	54.0	0.222806	discard_rmse	Cross-attn KV cache via register_buffer (attempt 1/3): torch.compile codegen diverges when to_k/to_v/norm_k removed from graph
+58d83b2	29.48	54.0	0.222806	discard_rmse	KV cache: remove conditional branch (attempt 2/3): same bit-identical RMSE 0.222806 — not a storage issue
+f25c1c4	29.48	54.0	0.222806	discard_rmse	KV cache: fresh _CachedCrossAttn module with always-tensor buffers (attempt 3/3): same RMSE — inductor codegen changes when cross-attn ops removed from graph regardless of storage mechanism
+b4e9e53	29.43	54.0	0.145009	keep	Reverted all 3 KV cache attempts (same as 961da81)

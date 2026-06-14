@@ -228,11 +228,9 @@ class WanTransformerBlock(nn.Module):
     query, key = apply_flashinfer_rope_qk_inplace(query, key, cos_sin_cache, is_neox=False)
 
     attn_output = self.to_out(self.attn1(query, key, value).flatten(2))
-    null_shift = null_scale = torch.zeros((1,), device=hidden_states.device, dtype=hidden_states.dtype)
-    norm_hidden_states, hidden_states = self.self_attn_residual_norm(
-      hidden_states, attn_output, gate_msa, null_shift, null_scale
-    )
-    norm_hidden_states = norm_hidden_states.to(orig_dtype)
+    # skip fuse_scale_shift_kernel(shift=0, scale=0) which is a no-op identity
+    hidden_states = hidden_states + attn_output * gate_msa
+    norm_hidden_states = self.self_attn_residual_norm.norm(hidden_states).to(orig_dtype)
     hidden_states = hidden_states.to(orig_dtype)
 
     attn_output = self.attn2(norm_hidden_states, encoder_hidden_states)
