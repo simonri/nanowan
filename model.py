@@ -241,7 +241,8 @@ class WanTransformerBlock(nn.Module):
     hidden_states = hidden_states.to(orig_dtype)
 
     ff_output = self.ffn(norm_hidden_states)
-    return self.mlp_residual(ff_output, c_gate_msa, hidden_states).to(orig_dtype)
+    # skip MulAdd Triton kernel (fuse_scale_shift with scale_constant=0) — replace with native ops
+    return (hidden_states + ff_output * c_gate_msa).to(orig_dtype)
 
 
 class WanTimeTextImageEmbedding(nn.Module):
