@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from lora import apply_loras
-from model import WanModel, precompute_cross_attn_kv, replace_attn_linears_with_fp8, replace_ffn_linears_with_fp8, replace_last_n_attn_with_rowwise_fp8, replace_last_n_ffn_with_fp8
+from model import WanModel, replace_attn_linears_with_fp8, replace_ffn_linears_with_fp8, replace_last_n_attn_with_rowwise_fp8, replace_last_n_ffn_with_fp8
 from prepare import (
   DIT_DTYPE,
   FLOW_SHIFT,
@@ -227,11 +227,6 @@ def main():
   replace_last_n_attn_with_rowwise_fp8(high_model, n=15)  # last 15/40 blocks attn rowwise FP8
   replace_ffn_linears_with_fp8(low_model)        # FP8 for low-noise steps only; high-noise stays fp16
   replace_attn_linears_with_fp8(low_model)       # attn projections are RMSNorm outputs (Gaussian → good FP8)
-
-  # Precompute cross-attention K and V before compile; text embedding is same every step
-  _enc_fp16 = prompt_embeds.to(DEVICE, dtype=DIT_DTYPE)
-  precompute_cross_attn_kv(high_model, _enc_fp16)
-  precompute_cross_attn_kv(low_model, _enc_fp16)
 
   load_seconds = time.perf_counter() - t_total
 
