@@ -232,8 +232,7 @@ def main():
 
   # Compile and warm up both models before the denoising timer starts
   print("Compiling models (warmup before timer)...")
-  torch._inductor.config.triton.use_block_ptr = True  # TMA block pointers for Triton kernels on H100
-  torch._inductor.config.combo_kernels = True          # fuse multiple pointwise Triton kernels
+  torch._inductor.config.triton.use_block_ptr = True  # TMA block pointers for inductor Triton kernels on H100
   high_model = torch.compile(high_model, mode="default", dynamic=False)
   low_model = torch.compile(low_model, mode="default", dynamic=False)
   lat_h_w = HEIGHT // 8
