@@ -126,8 +126,11 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
 
 
 def replace_last_n_self_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
-  """Replace ONLY self-attention linears (not cross-attn) in the last n blocks with rowwise FP8."""
+  """Replace ONLY self-attention linears (not cross-attn) in the last n blocks with rowwise FP8.
+  Skips blocks whose self-attn is already RowWiseFP8Linear (safe to call after replace_last_n_attn_with_rowwise_fp8)."""
   for block in model.blocks[-n:]:
+    if isinstance(block.to_q, RowWiseFP8Linear):
+      continue  # already quantized (would double-quantize if replaced)
     block.to_q = RowWiseFP8Linear(block.to_q.weight, block.to_q.bias)
     block.to_k = RowWiseFP8Linear(block.to_k.weight, block.to_k.bias)
     block.to_v = RowWiseFP8Linear(block.to_v.weight, block.to_v.bias)
