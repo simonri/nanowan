@@ -23,7 +23,7 @@ from layers import (
 from lora import get_param_names_mapping
 from utils import get_available_gpu_memory
 
-__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8", "replace_first_n_cross_attn_qo_with_rowwise_fp8"]
+__all__ = ["WanModel", "FP8Linear", "RowWiseFP8Linear", "replace_ffn_linears_with_fp8", "replace_attn_linears_with_fp8", "replace_last_n_ffn_with_fp8", "replace_last_n_attn_with_rowwise_fp8"]
 
 _FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0
 
@@ -122,17 +122,6 @@ def replace_last_n_attn_with_rowwise_fp8(model: "WanModel", n: int) -> None:
     block.attn2.to_q = RowWiseFP8Linear(block.attn2.to_q.weight, block.attn2.to_q.bias)
     block.attn2.to_k = RowWiseFP8Linear(block.attn2.to_k.weight, block.attn2.to_k.bias)
     block.attn2.to_v = RowWiseFP8Linear(block.attn2.to_v.weight, block.attn2.to_v.bias)
-    block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
-
-
-def replace_first_n_cross_attn_qo_with_rowwise_fp8(model: "WanModel", n: int) -> None:
-  """Replace cross-attention Q and O projections in the first n blocks with rowwise FP8.
-
-  K and V are skipped: they process only 512 text tokens (tiny GEMMs, negligible cost).
-  This targets the large [32760, 5120]×[5120, 5120] GEMMs that are currently in BF16.
-  """
-  for block in model.blocks[:n]:
-    block.attn2.to_q = RowWiseFP8Linear(block.attn2.to_q.weight, block.attn2.to_q.bias)
     block.attn2.to_out = RowWiseFP8Linear(block.attn2.to_out.weight, block.attn2.to_out.bias)
 
 
