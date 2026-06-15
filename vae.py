@@ -455,6 +455,19 @@ class Wan2_1_VAE(nn.Module):
     self._feat_map = [None] * self._conv_num
 
   def load(self, model_path: str) -> None:
+    import os
+    from flashpack import assign_from_file
+
+    fp_path = model_path.replace(".safetensors", ".flashpack")
+    if os.path.exists(fp_path):
+      print(f"Loading VAE from {fp_path} (flashpack). avail mem: {get_available_gpu_memory():.2f} GB")
+      t0 = time.perf_counter()
+      assign_from_file(self, fp_path, device=str(DEVICE), strict_params=True, strict_buffers=True)
+      self.eval().requires_grad_(False)
+      _to_channels_last(self)
+      print(f"  VAE load: flashpack={time.perf_counter()-t0:.2f}s")
+      return
+
     print(f"Loading VAE from {model_path}. avail mem: {get_available_gpu_memory():.2f} GB")
     t0 = time.perf_counter()
     state_dict = safetensors_load_file(model_path, device=str(DEVICE))

@@ -8,6 +8,7 @@ import torch.nn as nn
 from safetensors.torch import load_file as safetensors_load_file
 
 from layers import (
+  FP8Linear,
   MLP,
   LayerNormScaleShift,
   ModulateProjection,
@@ -74,10 +75,10 @@ class WanCrossAttention(nn.Module):
     super().__init__()
     self.num_heads = num_heads
     self.head_dim = dim // num_heads
-    self.to_q = nn.Linear(dim, dim)
-    self.to_k = nn.Linear(dim, dim)
-    self.to_v = nn.Linear(dim, dim)
-    self.to_out = nn.Linear(dim, dim)
+    self.to_q = FP8Linear(dim, dim)
+    self.to_k = FP8Linear(dim, dim)
+    self.to_v = FP8Linear(dim, dim)
+    self.to_out = FP8Linear(dim, dim)
     self.norm_q = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.norm_k = RMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
     self.attn = WanAttention(num_heads=num_heads, head_size=self.head_dim, causal=False)
@@ -95,10 +96,10 @@ class WanTransformerBlock(nn.Module):
     self.num_heads = num_heads
     self.head_dim = dim // num_heads
     self.norm1 = LayerNormScaleShift(dim, eps=eps, elementwise_affine=False, dtype=torch.float32)
-    self.to_q = nn.Linear(dim, dim, bias=True)
-    self.to_k = nn.Linear(dim, dim, bias=True)
-    self.to_v = nn.Linear(dim, dim, bias=True)
-    self.to_out = nn.Linear(dim, dim, bias=True)
+    self.to_q = FP8Linear(dim, dim, bias=True)
+    self.to_k = FP8Linear(dim, dim, bias=True)
+    self.to_v = FP8Linear(dim, dim, bias=True)
+    self.to_out = FP8Linear(dim, dim, bias=True)
     self.attn1 = WanAttention(num_heads=num_heads, head_size=self.head_dim, causal=False)
     self.norm_q = RMSNorm(dim, eps=eps)
     self.norm_k = RMSNorm(dim, eps=eps)
@@ -109,7 +110,7 @@ class WanTransformerBlock(nn.Module):
     self.cross_attn_residual_norm = ScaleResidualLayerNormScaleShift(
       dim, eps=eps, elementwise_affine=False, dtype=torch.float32
     )
-    self.ffn = MLP(dim, ffn_dim, act_type="gelu_pytorch_tanh")
+    self.ffn = MLP(dim, ffn_dim, act_type="gelu_pytorch_tanh", fp8=True)
     self.mlp_residual = MulAdd()
     self.scale_shift_table = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
 
@@ -240,6 +241,29 @@ class WanModel(nn.Module):
     return hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
 
   def load(self, model_path: str) -> None:
+    import os
+    from flashpack import assign_from_file
+    from prepare import DIT_DTYPE
+    from utils import DEVICE
+
+    fp_path = model_path.replace(".safetensors", ".flashpack")
+    if os.path.exists(fp_path):
+      print(f"Loading Transformer from {fp_path} (flashpack). avail mem: {get_available_gpu_memory():.2f} GB")
+      t0 = time.perf_counter()
+      assign_from_file(self, fp_path, device=DEVICE, strict_params=True, strict_buffers=False)
+      # assign_from_file does not coerce dtypes; cast float32 params/buffers to DIT_DTYPE
+      # (weight_scale buffers must stay float32 for fp8_scaled_mm)
+      for param in self.parameters():
+        if param.dtype == torch.float32:
+          param.data = param.data.to(DIT_DTYPE)
+      for name, buf in self.named_buffers():
+        if buf.dtype == torch.float32 and not name.endswith(".weight_scale"):
+          buf.data = buf.data.to(DIT_DTYPE)
+      torch.cuda.synchronize()
+      self.eval().requires_grad_(False)
+      print(f"  Transformer load: flashpack={time.perf_counter()-t0:.2f}s")
+      return
+
     print(f"Loading Transformer from {model_path}. avail mem: {get_available_gpu_memory():.2f} GB")
     t0 = time.perf_counter()
     state_dict = safetensors_load_file(model_path)

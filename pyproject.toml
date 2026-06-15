@@ -12,6 +12,7 @@ dependencies = [
   "transformers>=4.49.0",
   "tokenizers>=0.20.3",
   "safetensors",
+  "flashpack",
   "tqdm",
   "imageio[pyav]",
   "imageio-ffmpeg",

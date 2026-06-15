@@ -497,18 +497,63 @@ def get_act_fn(name: str) -> nn.Module:
 
 
 # --------------------------------------------------------------------------- #
+# FP8 linear layer using sgl_kernel fp8 GEMM
+# --------------------------------------------------------------------------- #
+
+import sgl_kernel
+
+
+class FP8Linear(nn.Module):
+  def __init__(self, in_features: int, out_features: int, bias: bool = True):
+    super().__init__()
+    self.in_features = in_features
+    self.out_features = out_features
+    self.weight = nn.Parameter(
+      torch.empty(out_features, in_features, dtype=torch.float8_e4m3fn),
+      requires_grad=False,
+    )
+    self.register_buffer("weight_scale", torch.ones(1, dtype=torch.float32))
+    self.bias = nn.Parameter(torch.empty(out_features)) if bias else None
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    orig_shape = x.shape
+    x_flat = x.reshape(-1, x.shape[-1]).contiguous()
+    n_tokens = x_flat.shape[0]
+    x_q = torch.empty_like(x_flat, dtype=torch.float8_e4m3fn)
+    scales_a = torch.empty(n_tokens, dtype=torch.float32, device=x.device)
+    sgl_kernel.sgl_per_token_quant_fp8(x_flat, x_q, scales_a)
+    scales_b = self.weight_scale.expand(self.out_features).contiguous()
+    bias = self.bias.to(x.dtype) if self.bias is not None else None
+    out = sgl_kernel.fp8_scaled_mm(
+      x_q,
+      self.weight.T,  # column-major view (no copy) — required by fp8_scaled_mm
+      scales_a,
+      scales_b,
+      out_dtype=x.dtype,
+      bias=bias,
+    )
+    return out.reshape(*orig_shape[:-1], self.out_features)
+
+
+# --------------------------------------------------------------------------- #
 # MLP (from wan/layers/mlp.py)
 # --------------------------------------------------------------------------- #
 
 
 class MLP(nn.Module):
   def __init__(
-    self, input_dim: int, mlp_hidden_dim: int, output_dim: int | None = None, act_type: str = "gelu_pytorch_tanh"
+    self,
+    input_dim: int,
+    mlp_hidden_dim: int,
+    output_dim: int | None = None,
+    act_type: str = "gelu_pytorch_tanh",
+    fp8: bool = False,
   ):
     super().__init__()
-    self.fc_in = nn.Linear(input_dim, mlp_hidden_dim, bias=True)
+    Linear = FP8Linear if fp8 else nn.Linear
+    self.fc_in = Linear(input_dim, mlp_hidden_dim, bias=True)
     self.act = get_act_fn(act_type)
-    self.fc_out = nn.Linear(mlp_hidden_dim, output_dim if output_dim is not None else input_dim, bias=True)
+    self.fc_out = Linear(mlp_hidden_dim, output_dim if output_dim is not None else input_dim, bias=True)
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     return self.fc_out(self.act(self.fc_in(x)))

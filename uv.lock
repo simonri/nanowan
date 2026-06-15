@@ -12,6 +12,24 @@ supported-markers = [
 prerelease-mode = "allow"
 
 [[package]]
+name = "accelerate"
+version = "1.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "packaging", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "psutil", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "pyyaml", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "safetensors", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8d/75/94cd5d389649578aca399e5aa822637eec18319a1dadc400ffe2f9a7493f/accelerate-1.14.0.tar.gz", hash = "sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d", size = 412167, upload-time = "2026-06-11T13:45:52.326Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/db/253133d7e7cb40d3af384bb2f5c0b4a2b7fdcffbc95c688cc67a20a3c103/accelerate-1.14.0-py3-none-any.whl", hash = "sha256:e94390c2863b873be18f623f9df48a0d8fe5eff13ea7f1a00092b0a7904888c6", size = 389246, upload-time = "2026-06-11T13:45:50.477Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -276,6 +294,21 @@ wheels = [
 ]
 
 [[package]]
+name = "flashpack"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "accelerate", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "click", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "safetensors", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/e7/6491940dfd98488380e5fa0bfb186b9c0f1b3bb9e9e24f5df0459873f8e8/flashpack-0.2.2.tar.gz", hash = "sha256:fd90ebb13dca2950169fd4c6576712099cc1775e15d3c385e4fa549f6f3f394d", size = 942481, upload-time = "2026-01-22T21:30:10.143Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/85/86b1279f6039ce6808ec10b17a8871fd9edf4e623a47e5bec68570020082/flashpack-0.2.2-py3-none-any.whl", hash = "sha256:2bebbc4baf2dbabf9a17e967441c9d49065bbf2cca377740748e2ae782861358", size = 42884, upload-time = "2026-01-22T21:30:08.728Z" },
+]
+
+[[package]]
 name = "fsspec"
 version = "2026.4.0"
 source = { registry = "https://download.pytorch.org/whl/cu129" }
@@ -445,6 +478,7 @@ dependencies = [
     { name = "flash-attn-3", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "flash-attn-4", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "flashinfer-python", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "flashpack", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "imageio", extra = ["pyav"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "imageio-ffmpeg", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -464,6 +498,7 @@ requires-dist = [
     { name = "flash-attn-3", url = "https://github.com/simonri/flash-attention-3-h100/releases/download/v1.0.0/flash_attn_3-3.0.0b1-cp39-abi3-linux_x86_64.whl" },
     { name = "flash-attn-4", specifier = ">=4.0.0b12" },
     { name = "flashinfer-python", index = "https://flashinfer.ai/whl/nightly/" },
+    { name = "flashpack" },
     { name = "imageio", extras = ["pyav"] },
     { name = "imageio-ffmpeg" },
     { name = "numpy", specifier = ">=1.23.5,<2" },
@@ -752,6 +787,16 @@ wheels = [
 ]
 
 [[package]]
+name = "psutil"
+version = "7.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/c6/d1ddf4abb55e93cebc4f2ed8b5d6dbad109ecb8d63748dd2b20ab5e57ebe/psutil-7.2.2.tar.gz", hash = "sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372", size = 493740, upload-time = "2026-01-28T18:14:54.428Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/70/5d8df3b09e25bce090399cf48e452d25c935ab72dad19406c77f4e828045/psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9", size = 155560, upload-time = "2026-01-28T18:15:25.976Z" },
+    { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -859,6 +904,7 @@ name = "sglang-kernel"
 version = "0.4.3+cu129"
 source = { registry = "https://docs.sglang.ai/whl/cu129/" }
 wheels = [
+    { url = "https://github.com/sgl-project/whl/releases/download/v0.4.3/sglang_kernel-0.4.3+cu129-cp310-abi3-manylinux2014_x86_64.whl", hash = "sha256:435ed1450dbf0c18a943e0621a7df786f31a19de9f3d2a1579282008c8ac5c1b" },
     { url = "https://github.com/sgl-project/whl/releases/download/v0.4.3/sglang_kernel-0.4.3+cu129-cp310-abi3-manylinux2014_x86_64.whl", hash = "sha256:0cad51dbf430889c940fd58eeb81372cd815dac518621034d10618fbd4877e98" },
 ]
 

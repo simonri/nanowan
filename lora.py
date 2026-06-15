@@ -129,16 +129,27 @@ def apply_loras(
       except AttributeError:
         print(f"  Warning: no submodule {mapped_module!r} for LoRA key {base_key!r}")
         continue
-      if not isinstance(target, nn.Linear):
+      from layers import FP8Linear
+      if not isinstance(target, (nn.Linear, FP8Linear)):
         continue
 
       rank = ranks.get(base_key)
       alpha = alphas.get(base_key)
       scale = strength * (alpha / rank if alpha is not None and rank is not None and alpha != rank else 1.0)
 
-      lora_A = ab["A"].to(target.weight)
-      lora_B = ab["B"].to(target.weight)
-      target.weight.data.add_(lora_B @ lora_A, alpha=scale)
+      if isinstance(target, FP8Linear):
+        # fp8 weights store (true_weight / weight_scale); dequant to true weight, add LoRA, re-quantize
+        w_true = target.weight.data.float() * target.weight_scale.float()
+        lora_A = ab["A"].float().to(target.weight.device)
+        lora_B = ab["B"].float().to(target.weight.device)
+        w_true.add_(lora_B @ lora_A, alpha=scale)
+        new_scale = (w_true.abs().max() / 448.0).clamp(min=1e-12)
+        target.weight.data = (w_true / new_scale).clamp(-448, 448).to(torch.float8_e4m3fn)
+        target.weight_scale.fill_(new_scale.item())
+      else:
+        lora_A = ab["A"].to(target.weight)
+        lora_B = ab["B"].to(target.weight)
+        target.weight.data.add_(lora_B @ lora_A, alpha=scale)
       n_merged += 1
 
     print(f"  Merged {n_merged} LoRA layers")

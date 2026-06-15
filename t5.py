@@ -180,6 +180,18 @@ class T5Encoder(nn.Module):
     return self.dropout(x)
 
   def load(self, model_path: str) -> None:
+    import os
+    from flashpack import assign_from_file
+
+    fp_path = model_path.replace(".safetensors", ".flashpack")
+    if os.path.exists(fp_path):
+      print(f"Loading T5 encoder from {fp_path} (flashpack). avail mem: {get_available_gpu_memory():.2f} GB")
+      t0 = time.perf_counter()
+      assign_from_file(self, fp_path, device=str(DEVICE), strict_params=True, strict_buffers=True)
+      self.eval().requires_grad_(False)
+      print(f"  T5 load: flashpack={time.perf_counter()-t0:.2f}s")
+      return
+
     print(f"Loading T5 encoder from {model_path}. avail mem: {get_available_gpu_memory():.2f} GB")
     t0 = time.perf_counter()
     state_dict = safetensors_load_file(model_path, device=str(DEVICE))
