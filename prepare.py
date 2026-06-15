@@ -18,8 +18,8 @@ OUTPUT_PATH = "output.mp4"
 # Output geometry (must not be reduced)
 # ---------------------------------------------------------------------------
 
-HEIGHT = 352
-WIDTH = 640
+HEIGHT = 640
+WIDTH = 352
 NUM_FRAMES = 81  # pixel frames; latent frames = 1 + (81-1)//4 = 21
 FPS = 16
 
@@ -63,8 +63,12 @@ def save_latents_ref(latents: torch.Tensor) -> None:
 
 def compare_latents_ref(latents: torch.Tensor) -> float | None:
   if not os.path.exists(LATENTS_REF_PATH):
+    save_latents_ref(latents)
     return None
   ref = torch.load(LATENTS_REF_PATH, map_location=latents.device, weights_only=True)
+  if ref.shape != latents.shape:
+    save_latents_ref(latents)
+    return None
   return (latents.float() - ref.float()).pow(2).mean().sqrt().item()
 
 
