@@ -44,6 +44,30 @@ You launch a run simply as: `uv run run.py`.
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the script as is.
 
+## Thinking before each experiment
+
+Before touching any code, reason through the idea explicitly. This is not optional — skipping this step leads to wasted runs and shallow exploration.
+
+**Write out:**
+
+1. **Hypothesis**: What specifically are you changing, and what is the mechanism by which it should reduce `denoising_seconds`? Be precise — "this should be faster" is not a hypothesis. "Fusing the scale-shift into the norm kernel eliminates a separate elementwise pass over the activation tensor, saving one full read/write of ~X MB" is.
+
+2. **Expected magnitude**: How much faster do you expect this to be, and why? Use the current baseline and known GPU throughput numbers (memory bandwidth, FLOP rate) to make a rough estimate. If you can't estimate even the sign, that's a signal the idea is undercooked.
+
+3. **Risk assessment**: What could go wrong? Does this touch RMSE-sensitive paths? Could it OOM? Is it architecture-specific in a way that might not apply here?
+
+4. **What success looks like**: Define in advance what result would cause you to keep vs discard this change. Don't decide after seeing the number.
+
+## Prioritizing what to try
+
+Don't randomly pick ideas. Reason about where the time is actually going before proposing experiments.
+
+- **Profile first if you're unsure**: If you don't know where the bottleneck is, use `torch.profiler` or timing probes inside the denoising loop to find out before optimizing blindly.
+- **Attack the biggest cost first**: A 10% improvement on a step that takes 80% of the time beats a 50% improvement on a step that takes 5%.
+- **Build on what worked**: After a successful experiment, ask why it worked and whether there are related changes that exploit the same mechanism. Chain discoveries into a research thread rather than jumping randomly.
+- **Learn from failures**: When an experiment doesn't help, update your mental model. What does that tell you about the bottleneck? Rule out classes of ideas, not just individual ones.
+- **Distinguish memory-bound from compute-bound**: Many ops in the denoising loop are memory-bandwidth-limited, not FLOP-limited. Reducing memory traffic (fusion, lower precision, fewer passes) helps more than reducing FLOPs in those cases.
+
 ## Output format
 
 Once the script finishes it prints a summary like this:
@@ -95,15 +119,19 @@ The experiment runs on a dedicated branch (e.g. `nanowan/jun11`).
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune a `.py` file with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run run.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^denoising_seconds:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If denoising_seconds improved (lower), you "advance" the branch, keeping the git commit
-9. If denoising_seconds is equal or worse, you git reset back to where you started
+1. **Survey the state**: Check the current branch/commit and review `results.tsv` to understand what has been tried and what the current best is.
+2. **Think before acting** (see "Thinking before each experiment" above): Write out your hypothesis, expected magnitude, risks, and success criteria before writing any code.
+3. **Implement**: Tune a `.py` file with the chosen idea.
+4. **Commit**: `git commit`
+5. **Run**: `uv run run.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
+6. **Read results**: `grep "^denoising_seconds:\|^peak_vram_mb:\|^latent_rmse:" run.log`
+7. **Handle crashes**: If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up on this idea.
+8. **Analyze**: Compare results to your pre-experiment prediction. Did it work the way you expected? If not, why? Update your mental model accordingly — understanding why something didn't work is as valuable as the result itself.
+9. **Record**: Log results in `results.tsv` (do not commit this file — leave it untracked).
+10. **Decide**:
+    - If `denoising_seconds` improved → keep the commit, advance the branch.
+    - If equal or worse → `git reset --hard HEAD~1` to discard.
+11. **Plan the next experiment based on what you just learned**, not at random.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard.
 

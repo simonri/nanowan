@@ -18,8 +18,8 @@ OUTPUT_PATH = "output.mp4"
 # Output geometry (must not be reduced)
 # ---------------------------------------------------------------------------
 
-HEIGHT = 832
-WIDTH = 480
+HEIGHT = 352
+WIDTH = 640
 NUM_FRAMES = 81  # pixel frames; latent frames = 1 + (81-1)//4 = 21
 FPS = 16
 
@@ -37,8 +37,8 @@ TOKENIZER_ID = "google/umt5-xxl"
 MODEL_DIR = "models"
 T5_PATH = f"{MODEL_DIR}/text_encoders/umt5-xxl-enc-bf16.safetensors"
 VAE_PATH = f"{MODEL_DIR}/vae/Wan2_1_VAE_bf16.safetensors"
-HIGH_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/wan2.2_i2v_high_noise_14B_fp16.safetensors"
-LOW_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/wan2.2_i2v_low_noise_14B_fp16.safetensors"
+HIGH_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors"
+LOW_NOISE_PATH = f"{MODEL_DIR}/diffusion_models/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors"
 HIGH_NOISE_LORAS = [f"{MODEL_DIR}/loras/lightning_high_noise_model.safetensors"]
 HIGH_NOISE_STRENGTHS = [1.0]
 LOW_NOISE_LORAS = [f"{MODEL_DIR}/loras/lightning_low_noise_model.safetensors"]

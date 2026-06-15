@@ -248,6 +248,18 @@ class WanModel(nn.Module):
     t1 = time.perf_counter()
     mapping_fn = get_param_names_mapping(self.PARAM_NAMES_MAPPING)
     state_dict = {mapping_fn(k): v for k, v in state_dict.items()}
+
+    # Dequantize ComfyUI KJ-format FP8 checkpoints: weight_fp8 * scale_weight → fp16
+    if "scaled_fp8" in state_dict:
+      state_dict.pop("scaled_fp8")
+      scale_keys = [k for k in state_dict if k.endswith(".scale_weight")]
+      for sk in scale_keys:
+        weight_key = sk[: -len(".scale_weight")] + ".weight"
+        if weight_key in state_dict:
+          scale = state_dict.pop(sk).float()
+          state_dict[weight_key] = (state_dict[weight_key].float() * scale).to(torch.float16)
+        else:
+          state_dict.pop(sk)
     t_rename = time.perf_counter() - t1
 
     t2 = time.perf_counter()
