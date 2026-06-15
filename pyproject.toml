@@ -24,6 +24,7 @@ dependencies = [
   "triton>=3.6.0",
   "sglang-kernel",
   "flash-attn-4>=4.0.0b12",
+  "matplotlib>=3.10.9",
 ]
 
 [[tool.uv.index]]
