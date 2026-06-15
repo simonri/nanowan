@@ -1,3 +1,3 @@
 commit	denoising_s	memory_gb	latent_rmse	load_s	status	description
 a8c12dc	19.20	57.6	0.000	93.28	keep	baseline
-pending	16.45	43.1	0.419	33.23	keep	flashpack+fp8: FP8Linear attn/ffn, scale absorption, per-token quant via sgl_kernel
+af17f60	16.45	43.1	0.419	33.23	keep	flashpack+fp8: FP8Linear attn/ffn, scale absorption, per-token quant via sgl_kernel
